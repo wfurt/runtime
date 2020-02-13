@@ -11,9 +11,8 @@ namespace System.Net.Security
     {
         private interface ISslIOAdapter
         {
+            bool IsAsync();
             ValueTask<int> ReadAsync(byte[] buffer, int offset, int count);
-            ValueTask<int> ReadLockAsync(Memory<byte> buffer);
-            Task WriteLockAsync();
             ValueTask WriteAsync(byte[] buffer, int offset, int count);
             CancellationToken CancellationToken { get; }
         }
@@ -23,6 +22,7 @@ namespace System.Net.Security
             private readonly SslStream _sslStream;
             private readonly CancellationToken _cancellationToken;
 
+            public bool IsAsync() => true;
             public AsyncSslIOAdapter(SslStream sslStream, CancellationToken cancellationToken)
             {
                 _cancellationToken = cancellationToken;
@@ -30,10 +30,6 @@ namespace System.Net.Security
             }
 
             public ValueTask<int> ReadAsync(byte[] buffer, int offset, int count) => _sslStream.InnerStream.ReadAsync(new Memory<byte>(buffer, offset, count), _cancellationToken);
-
-            public ValueTask<int> ReadLockAsync(Memory<byte> buffer) => _sslStream.CheckEnqueueReadAsync(buffer);
-
-            public Task WriteLockAsync() => _sslStream.CheckEnqueueWriteAsync();
 
             public ValueTask WriteAsync(byte[] buffer, int offset, int count) => _sslStream.InnerStream.WriteAsync(new ReadOnlyMemory<byte>(buffer, offset, count), _cancellationToken);
 
@@ -44,22 +40,15 @@ namespace System.Net.Security
         {
             private readonly SslStream _sslStream;
 
+            public bool IsAsync() => false;
             public SyncSslIOAdapter(SslStream sslStream) => _sslStream = sslStream;
 
             public ValueTask<int> ReadAsync(byte[] buffer, int offset, int count) => new ValueTask<int>(_sslStream.InnerStream.Read(buffer, offset, count));
-
-            public ValueTask<int> ReadLockAsync(Memory<byte> buffer) => new ValueTask<int>(_sslStream.CheckEnqueueRead(buffer));
 
             public ValueTask WriteAsync(byte[] buffer, int offset, int count)
             {
                 _sslStream.InnerStream.Write(buffer, offset, count);
                 return default;
-            }
-
-            public Task WriteLockAsync()
-            {
-                _sslStream.CheckEnqueueWrite();
-                return Task.CompletedTask;
             }
 
             public CancellationToken CancellationToken => default;
