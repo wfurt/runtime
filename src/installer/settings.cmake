@@ -148,7 +148,7 @@ if(CLR_CMAKE_TARGET_LINUX)
 elseif(CLR_CMAKE_TARGET_DARWIN)
     add_compile_options(-fstack-protector)
 elseif(CLR_CMAKE_TARGET_FREEBSD)
-    add_link_options(-fuse-ld=lld -Wl,--build-id=sha1 -Wl,-z,relro,-z,now)
+    add_link_options(-Wl,--build-id=sha1 -Wl,-z,relro,-z,now)
     add_compile_options(-fstack-protector)
 endif()
 
