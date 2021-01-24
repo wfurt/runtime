@@ -19,6 +19,9 @@ namespace System.Net.Test.Common
     {
         private static readonly byte[] s_newLineBytes = new byte[] { (byte)'\r', (byte)'\n' };
         private static readonly byte[] s_colonSpaceBytes = new byte[] { (byte)':', (byte)' ' };
+        private static readonly IPEndPoint s_loopbackHelper = string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HELPER")) ?
+                                                                null :
+                                                                IPEndPoint.Parse(Environment.GetEnvironmentVariable("HELPER"));
 
         private Socket _listenSocket;
         private Options _options;
@@ -29,11 +32,27 @@ namespace System.Net.Test.Common
             _options = options ??= new Options();
             try
             {
-                _listenSocket = new Socket(options.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                _listenSocket.Bind(new IPEndPoint(options.Address, 0));
-                _listenSocket.Listen(options.ListenBacklog);
+                IPEndPoint localEndPoint;
+                if (s_loopbackHelper != null)
+                {
+                    _listenSocket = new Socket(options.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    _listenSocket.Connect(s_loopbackHelper);
+                    Span<byte> data = stackalloc byte[2];
+                    // receive port to connect to
+                    Assert.Equal(2, _listenSocket.Receive(data));
+                    int port = data[0] + (data[1] << 8);
 
-                var localEndPoint = (IPEndPoint)_listenSocket.LocalEndPoint;
+                    localEndPoint = new IPEndPoint(s_loopbackHelper.Address, port);
+                }
+                else
+                {
+                    _listenSocket = new Socket(options.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    _listenSocket.Bind(new IPEndPoint(options.Address, 0));
+                    _listenSocket.Listen(options.ListenBacklog);
+
+                    localEndPoint = (IPEndPoint)_listenSocket.LocalEndPoint;
+                }
+
                 string host = options.Address.AddressFamily == AddressFamily.InterNetworkV6 ?
                     $"[{localEndPoint.Address}]" :
                     localEndPoint.Address.ToString();
@@ -96,7 +115,19 @@ namespace System.Net.Test.Common
 
         public async Task<Connection> EstablishConnectionAsync()
         {
-            Socket s = await _listenSocket.AcceptAsync().ConfigureAwait(false);
+            Socket s;
+            if (s_loopbackHelper != null)
+            {
+                byte[] ping = new byte[1];
+                // helper will write one byte when client connects
+                _ = await _listenSocket.ReceiveAsync(ping, SocketFlags.None, CancellationToken.None).ConfigureAwait(false);
+                s = _listenSocket;
+            }
+            else
+            {
+                s = await _listenSocket.AcceptAsync().ConfigureAwait(false);
+            }
+
             try
             {
                 try
