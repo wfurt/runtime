@@ -819,6 +819,21 @@ namespace System.Net.Security
                         await FillBufferAsync(adapter, payloadBytes).ConfigureAwait(false);
                     }
 
+                    while (_internalBufferCount >= payloadBytes + SecureChannel.ReadHeaderSize)
+                    {
+                        TlsFrameHeader header = default;
+
+                        TlsFrameHelper.TryGetFrameHeader(new ReadOnlySpan<byte>(_internalBuffer, _internalOffset + payloadBytes, SecureChannel.ReadHeaderSize), ref header);
+                        int nextLength = GetFrameSize(new ReadOnlySpan<byte>(_internalBuffer, _internalOffset + payloadBytes, SecureChannel.ReadHeaderSize));
+                        if (nextLength + payloadBytes <= _internalBufferCount && nextLength + payloadBytes <= buffer.Length  && header.Type == TlsContentType.AppData)
+                        {
+                            payloadBytes += nextLength;
+                            continue;
+                        }
+
+                        break;
+                    }
+
                     // Set _decrytpedBytesOffset/Count to the current frame we have (including header)
                     // DecryptData will decrypt in-place and modify these to point to the actual decrypted data, which may be smaller.
                     _decryptedBytesOffset = _internalOffset;

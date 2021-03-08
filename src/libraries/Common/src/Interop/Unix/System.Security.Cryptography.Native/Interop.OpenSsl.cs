@@ -361,12 +361,27 @@ internal static partial class Interop
 
             if (retVal == count)
             {
+                int readBytes = 0;
+                retVal = 0;
                 unsafe
                 {
                     fixed (byte* fixedBuffer = outBuffer)
                     {
-                        retVal = Ssl.SslRead(context, fixedBuffer + offset, outBuffer.Length);
+                        do
+                        {
+                            readBytes = Ssl.SslRead(context, fixedBuffer + offset, outBuffer.Length - offset);
+                            if (readBytes > 0)
+                            {
+                                retVal += readBytes;
+                                offset += readBytes;
+                            }
+                            else
+                            {
+                                retVal = readBytes;
+                            }
+                        } while (readBytes > 0 && Crypto.BioCtrlPending(context.InputBio!) > 0);
                     }
+
                 }
 
                 if (retVal > 0)
