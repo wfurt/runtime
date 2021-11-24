@@ -142,8 +142,15 @@ internal static partial class Interop
 
         [DllImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_Tls13Supported")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool Tls13SupportedImpl();
+        private static extern bool Tls13SupportedNative();
+
         internal static readonly bool Tls13Supported = Tls13SupportedImpl();
+
+        internal static bool Tls13SupportedImpl()
+        {
+            EsureInitialized();
+            return Tls13SupportedNative();
+        }
 
         internal static SafeSharedX509NameStackHandle SslGetClientCAList(SafeSslHandle ssl)
         {
