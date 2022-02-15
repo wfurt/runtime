@@ -92,6 +92,8 @@ namespace System.Net.Security
                 inputBuffers.SetNextBuffer(new InputSecurityBuffer(channelBinding));
             }
 
+            Console.WriteLine("InitializeSecurityContext called with {0} and {1}: {2} {3}", credentialsHandle, securityContext, inputBuffers.Count, inputBuffers._item0.Token.Length);
+
             var outSecurityBuffer = new SecurityBuffer(resultBlob, SecurityBufferType.SECBUFFER_TOKEN);
 
             Interop.SspiCli.ContextFlags outContextFlags = Interop.SspiCli.ContextFlags.Zero;

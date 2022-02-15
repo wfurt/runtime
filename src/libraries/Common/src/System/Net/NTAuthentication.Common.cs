@@ -169,6 +169,8 @@ namespace System.Net
             {
                 decodedIncomingBlob = Convert.FromBase64String(incomingBlob);
             }
+
+            Console.WriteLine("Got {0} bytes from {1} on {2}. channelBinding {3}", decodedIncomingBlob?.Length, incomingBlob?.Length, this.GetHashCode(), _channelBinding);
             byte[]? decodedOutgoingBlob = null;
 
             if ((IsValidContext || IsCompleted) && decodedIncomingBlob == null)
@@ -223,6 +225,8 @@ namespace System.Net
                         _channelBinding,
                         ref result,
                         ref _contextFlags);
+
+                    Console.WriteLine("Got {0} and {1} bytes from InitializeSecurityContext on {2}", statusCode, result?.Length, this.GetHashCode());
 
                     if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"SSPIWrapper.InitializeSecurityContext() returns statusCode:0x{((int)statusCode.ErrorCode):x8} ({statusCode})");
 

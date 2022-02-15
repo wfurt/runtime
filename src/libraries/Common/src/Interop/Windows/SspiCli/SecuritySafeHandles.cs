@@ -188,8 +188,9 @@ namespace System.Net.Security
 #if DEBUG
         public new IntPtr DangerousGetHandle()
         {
-            Debug.Fail("This method should never be called for this type");
+            //Debug.Fail("This method should never be called for this type");
             throw NotImplemented.ByDesign;
+           // return _handle;
         }
 #endif
 
@@ -374,6 +375,7 @@ namespace System.Net.Security
                 isContextAbsent = refContext._handle.IsZero;
             }
 
+            Console.WriteLine("InitializeSecurityContext: called with {0} buffers", inSecBuffers.Count);
             // Optional output buffer that may need to be freed.
             IntPtr outoutBuffer = IntPtr.Zero;
             try
@@ -435,6 +437,8 @@ namespace System.Net.Security
                             inUnmanagedBuffer[0].cbBuffer = inSecBuffers._item0.Token.Length;
                             inUnmanagedBuffer[0].pvBuffer = (IntPtr)pinnedToken0;
                         }
+
+                        Console.WriteLine("InitializeSecurityContext pinning {0} with {1} bytes", inSecBuffers._item0.Type, inUnmanagedBuffer[0].cbBuffer);
                     }
 
                     fixed (byte* pinnedOutBytes = outSecBuffer.token)
@@ -477,6 +481,7 @@ namespace System.Net.Security
                                             ref outFlags,
                                             null);
 
+                            Console.WriteLine("MustRunInitializeSecurityContext finisehed with {0} for {1}. Produced {2} bytes", errorCode, targetName, outUnmanagedBuffer.cbBuffer);
                             if (isSspiAllocated)
                             {
                                 outoutBuffer = outUnmanagedBuffer.pvBuffer;

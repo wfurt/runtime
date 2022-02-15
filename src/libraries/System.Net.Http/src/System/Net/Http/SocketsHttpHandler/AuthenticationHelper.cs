@@ -100,6 +100,7 @@ namespace System.Net.Http
             }
 
             challenge = new AuthenticationChallenge(authenticationType, scheme, credential, challengeData);
+            Console.WriteLine("Creating new authenticator for {0} {1} {2}", uri, scheme, authenticationType);
             if (NetEventSource.Log.IsEnabled())
             {
                 NetEventSource.AuthenticationInfo(uri, $"Authentication scheme '{scheme}' selected. Client username={challenge.Credential.UserName}");
