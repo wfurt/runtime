@@ -225,15 +225,15 @@ partial class Test
         SetLastError = IsFalse)]
     public static partial void Method1();
 
-    [LibraryImport(nameof(Test),
+    [LibraryImport(nameof(Test) + ""Suffix"",
         StringMarshalling = (StringMarshalling)Two,
-        EntryPoint = EntryPointName,
+        EntryPoint = EntryPointName + ""Suffix"",
         SetLastError = !IsTrue)]
     public static partial void Method2();
 
-    [LibraryImport(nameof(Test),
+    [LibraryImport($""{nameof(Test)}Suffix"",
         StringMarshalling = (StringMarshalling)2,
-        EntryPoint = EntryPointName,
+        EntryPoint = $""{EntryPointName}Suffix"",
         SetLastError = 0 != 1)]
     public static partial void Method3();
 }
@@ -857,23 +857,23 @@ unsafe struct Native
     public void FromNativeValue(nint value) => ptr = (int*)value;
 }
 ";
-            public static string NativeTypePinnable = BasicParameterWithByRefModifier("in", "S")
-                + NonBlittableUserDefinedType() + @"
+            public static string NativeTypePinnable(string nativeType, string pinnedType) => BasicParameterWithByRefModifier("in", "S")
+                + NonBlittableUserDefinedType() + @$"
 [CustomTypeMarshaller(typeof(S), Features = CustomTypeMarshallerFeatures.CallerAllocatedBuffer | CustomTypeMarshallerFeatures.TwoStageMarshalling, BufferSize = 1)]
 unsafe ref struct Native
-{
-    public Native(S s) { }
-    public Native(S s, System.Span<byte> buffer) { }
+{{
+    public Native(S s) {{ }}
+    public Native(S s, System.Span<byte> buffer) {{ }}
 
-    public ref byte GetPinnableReference() => throw null;
+    public ref {pinnedType} GetPinnableReference() => throw null;
 
-    public S ToManaged() => new S { b = true };
+    public S ToManaged() => new S {{ b = true }};
 
-    public byte* ToNativeValue() => throw null;
-    public void FromNativeValue(byte* value) { }
+    public {nativeType}* ToNativeValue() => throw null;
+    public void FromNativeValue({nativeType}* value) {{ }}
 
-    public void FreeNative() { }
-}
+    public void FreeNative() {{ }}
+}}
 ";
         }
 
