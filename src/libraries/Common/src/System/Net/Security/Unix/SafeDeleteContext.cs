@@ -13,8 +13,9 @@ namespace System.Net.Security
     internal abstract class SafeDeleteContext : SafeHandle
     {
 #endif
-        private SafeFreeCredentials? _credential;
+        //private SafeFreeCredentials? _credential;
 
+/*
         protected SafeDeleteContext(SafeFreeCredentials credential)
             : base(IntPtr.Zero, true)
         {
@@ -28,26 +29,27 @@ namespace System.Net.Security
             _credential = credential;
             _credential.DangerousAddRef(ref ignore);
         }
+*/
 
         public SafeDeleteContext(IntPtr handle) : base(handle, true)
         {
-            _credential = null;
+           // _credential = null;
         }
 
         public SafeDeleteContext(IntPtr handle, bool ownsHandle) : base(handle, ownsHandle)
         {
-            _credential = null;
+            //_credential = null;
         }
 
-        public override bool IsInvalid
-        {
-            get { return (null == _credential); }
-        }
+ //       public override bool IsInvalid
+//        {
+//            get { return (null == _credential); }
+//        }
 
         protected override bool ReleaseHandle()
         {
-            _credential?.DangerousRelease();
-            _credential = null!;
+//            _credential?.DangerousRelease();
+//            _credential = null!;
             return true;
         }
     }

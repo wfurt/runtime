@@ -17,6 +17,7 @@ namespace System.Net.Security
         private SafeGssNameHandle? _targetName;
         private SafeGssContextHandle? _context;
         private bool _isNtlmUsed;
+        //private SafeFreeCredentials? _credential;
 
         public SafeGssCredHandle AcceptorCredential
         {
@@ -44,9 +45,9 @@ namespace System.Net.Security
         }
 
         public SafeDeleteNegoContext(SafeFreeNegoCredentials credential)
-            : base(credential)
+            : base(IntPtr.Zero)
         {
-            Debug.Assert((null != credential), "Null credential in SafeDeleteNegoContext");
+            //Debug.Assert((null != credential), "Null credential in SafeDeleteNegoContext");
         }
 
         public SafeDeleteNegoContext(SafeFreeNegoCredentials credential, string targetName)

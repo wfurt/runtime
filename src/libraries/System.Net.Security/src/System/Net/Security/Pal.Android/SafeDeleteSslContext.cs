@@ -39,7 +39,7 @@ namespace System.Net
         public SafeSslHandle SslContext => _sslContext;
 
         public SafeDeleteSslContext(SafeFreeSslCredentials credential, SslAuthenticationOptions authOptions)
-            : base(credential)
+            : base(IntPtr.Zero)
         {
             Debug.Assert((credential != null) && !credential.IsInvalid, "Invalid credential used in SafeDeleteSslContext");
 
