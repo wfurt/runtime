@@ -677,6 +677,7 @@ namespace System.Net.Sockets.Tests
                     SocketReceiveFromResult result = await ReceiveFromAsync(server, buffer, new IPEndPoint(IPAddress.Any, 0));
 
                     Assert.Equal(0, result.ReceivedBytes);
+                    Console.WriteLine("RemoteEndPoint {0}", result.RemoteEndPoint);
                     Assert.Equal(client.LocalEndPoint, result.RemoteEndPoint);
 
                     // Read real packet.

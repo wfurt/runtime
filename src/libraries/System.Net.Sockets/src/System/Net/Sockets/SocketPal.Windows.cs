@@ -186,12 +186,13 @@ namespace System.Net.Sockets
             return socket.IsInvalid ? GetLastSocketError() : SocketError.Success;
         }
 
-        public static SocketError Connect(SafeSocketHandle handle, byte[] peerAddress, int peerAddressLen)
+        //public static SocketError Connect(SafeSocketHandle handle, byte[] peerAddress, int peerAddressLen)
+        public static SocketError Connect(SafeSocketHandle handle, Memory<byte> peerAddress)
         {
             SocketError errorCode = Interop.Winsock.WSAConnect(
                 handle,
-                peerAddress,
-                peerAddressLen,
+                peerAddress.Span,
+                peerAddress.Length,
                 IntPtr.Zero,
                 IntPtr.Zero,
                 IntPtr.Zero,
@@ -300,15 +301,15 @@ namespace System.Net.Sockets
             }
         }
 
-        public static SocketError SendTo(SafeSocketHandle handle, byte[] buffer, int offset, int size, SocketFlags socketFlags, byte[] peerAddress, int peerAddressSize, out int bytesTransferred) =>
-            SendTo(handle, buffer.AsSpan(offset, size), socketFlags, peerAddress, peerAddressSize, out bytesTransferred);
+        public static SocketError SendTo(SafeSocketHandle handle, byte[] buffer, int offset, int size, SocketFlags socketFlags, Memory<byte> peerAddress, out int bytesTransferred) =>
+            SendTo(handle, buffer.AsSpan(offset, size), socketFlags, peerAddress, out bytesTransferred);
 
-        public static unsafe SocketError SendTo(SafeSocketHandle handle, ReadOnlySpan<byte> buffer, SocketFlags socketFlags, byte[] peerAddress, int peerAddressSize, out int bytesTransferred)
+        public static unsafe SocketError SendTo(SafeSocketHandle handle, ReadOnlySpan<byte> buffer, SocketFlags socketFlags, Memory<byte> peerAddress, out int bytesTransferred)
         {
             int bytesSent;
             fixed (byte* bufferPtr = &MemoryMarshal.GetReference(buffer))
             {
-                bytesSent = Interop.Winsock.sendto(handle, bufferPtr, buffer.Length, socketFlags, peerAddress, peerAddressSize);
+                bytesSent = Interop.Winsock.sendto(handle, bufferPtr, buffer.Length, socketFlags, peerAddress.Span, peerAddress.Length);
             }
 
             if (bytesSent == (int)SocketError.SocketError)

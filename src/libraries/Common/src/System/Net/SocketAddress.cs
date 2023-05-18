@@ -28,7 +28,9 @@ namespace System.Net.Internals
 #pragma warning restore CA1802
 
         internal int InternalSize;
-        internal byte[] Buffer;
+        //internal byte[] Buffer;
+        // Pinning?
+        public byte[] Buffer;
 
         private const int MinSize = 2;
         private const int MaxSize = 32; // IrDA requires 32 bytes
@@ -60,7 +62,9 @@ namespace System.Net.Internals
         {
             get
             {
+                //Console.WriteLine("setting byts {0} from {1} {2}", offset, Size, Buffer.Length);
                 if (offset < 0 || offset >= Size)
+                //if (offset < 0 || offset >= Buffer.Length)
                 {
                     throw new IndexOutOfRangeException();
                 }
@@ -68,7 +72,9 @@ namespace System.Net.Internals
             }
             set
             {
-                if (offset < 0 || offset >= Size)
+                Console.WriteLine("setting byts {0} from {1} {2}", offset, Size, Buffer.Length);
+                //if (offset < 0 || offset >= Size)
+                if (offset < 0 || offset >= Buffer.Length)
                 {
                     throw new IndexOutOfRangeException();
                 }
@@ -80,6 +86,43 @@ namespace System.Net.Internals
             }
         }
 
+        public Memory<byte> SocketBuffer
+        {
+            get
+            {
+                return new Memory<byte>(Buffer, 0, InternalSize);
+            }
+        }
+
+        public bool TryGetAddress(out Int128 address)
+        {
+            if (Family == AddressFamily.InterNetwork)
+            {
+                Debug.Assert(Size >= IPv4AddressSize);
+
+                address = SocketAddressPal.GetIPv4Address(Buffer) & 0x0FFFFFFFF;
+                return true;
+            }
+
+            address = 0;
+            return false;
+        }
+
+        public bool TryGetPort(out int port)
+        {
+            if (Family == AddressFamily.InterNetwork || Family == AddressFamily.InterNetworkV6)
+            {
+                port = (int)SocketAddressPal.GetPort(Buffer);
+                return true;
+            }
+
+            port = 0;
+            return false;
+        }
+
+        //GetPort() => (int)SocketAddressPal.GetPort(Buffer);
+
+
         public SocketAddress(AddressFamily family) : this(family, MaxSize)
         {
         }
@@ -89,11 +132,12 @@ namespace System.Net.Internals
             ArgumentOutOfRangeException.ThrowIfLessThan(size, MinSize);
 
             InternalSize = size;
-#if !SYSTEM_NET_PRIMITIVES_DLL && WINDOWS
+//#if !SYSTEM_NET_PRIMITIVES_DLL && WINDOWS
+#if WINDOWS
             // WSARecvFrom needs a pinned pointer to the 32bit socket address size: https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsarecvfrom
             // Allocate IntPtr.Size extra bytes at the end of Buffer ensuring IntPtr.Size alignment, so we don't need to pin anything else.
             // The following formula will extend 'size' to the alignment boundary then add IntPtr.Size more bytes.
-            size = (size + IntPtr.Size -  1) / IntPtr.Size * IntPtr.Size + IntPtr.Size;
+            size = (size + IntPtr.Size - 1) / IntPtr.Size * IntPtr.Size + IntPtr.Size;
 #endif
             Buffer = new byte[size];
 
@@ -195,6 +239,48 @@ namespace System.Net.Internals
         public override bool Equals(object? comparand) =>
             comparand is SocketAddress other &&
             Buffer.AsSpan(0, Size).SequenceEqual(other.Buffer.AsSpan(0, other.Size));
+
+        public bool Equals(EndPoint comparand)
+        {
+            IPEndPoint? ipe = comparand as IPEndPoint;
+            if (ipe != null)
+            {
+                if (GetPort() != ipe.Port)
+                {
+                    return false;
+                }
+                if (Family == AddressFamily.InterNetwork)
+                {
+#pragma warning disable CS0618 // using Obsolete Address API because it's the more efficient option in this case
+                    return ipe.Address.Address == (long)(SocketAddressPal.GetIPv4Address(Buffer) & 0x0FFFFFFFF);
+#pragma warning restore CS0618
+                }
+
+                Span<byte> addressBytes = stackalloc byte[IPAddressParserStatics.IPv6AddressBytes];
+                ipe.Address.TryWriteBytes(addressBytes, out int bytesWritten);
+                Debug.Assert(bytesWritten == IPAddressParserStatics.IPv6AddressBytes);
+
+                // TODO find address bytes in buffer?
+                Span<byte> addressBytes2 = stackalloc byte[IPAddressParserStatics.IPv6AddressBytes];
+                uint scope;
+                SocketAddressPal.GetIPv6Address(Buffer, addressBytes2, out scope);
+                return addressBytes.SequenceEqual(addressBytes2);
+            }
+            else if (Family != comparand.AddressFamily)
+            {
+                return false;
+            }
+            else
+            {
+#if SYSTEM_NET_PRIMITIVES_DLL
+                SocketAddress socketAddress = comparand.Serialize();
+                return socketAddress.Buffer.AsSpan().SequenceEqual(new Span<byte>(Buffer!).Slice(0, Size));
+#else
+            // TODO delete.
+            return false;
+#endif
+            }
+        }
 
         public override int GetHashCode()
         {

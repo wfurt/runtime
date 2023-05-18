@@ -105,6 +105,8 @@ namespace System.Net.Sockets
         public LingerOption(bool enable, int seconds) { }
         public bool Enabled { get { throw null; } set { } }
         public int LingerTime { get { throw null; } set { } }
+        public override bool Equals(object? comparand) { throw null; }
+        public override int GetHashCode() { throw null; }
     }
     public partial class MulticastOption
     {
@@ -223,7 +225,7 @@ namespace System.Net.Sockets
     public sealed partial class SafeSocketHandle : Microsoft.Win32.SafeHandles.SafeHandleMinusOneIsInvalid
     {
         public SafeSocketHandle() : base (default(bool)) { }
-        public SafeSocketHandle(System.IntPtr preexistingHandle, bool ownsHandle) : base (default(bool)) { }
+        public SafeSocketHandle(nint preexistingHandle, bool ownsHandle) : base (default(bool)) { }
         public override bool IsInvalid { get { throw null; } }
         protected override bool ReleaseHandle() { throw null; }
     }
@@ -272,7 +274,7 @@ namespace System.Net.Sockets
         public bool DualMode { get { throw null; } set { } }
         public bool EnableBroadcast { get { throw null; } set { } }
         public bool ExclusiveAddressUse { get { throw null; } set { } }
-        public System.IntPtr Handle { get { throw null; } }
+        public nint Handle { get { throw null; } }
         public bool IsBound { get { throw null; } }
         [System.Diagnostics.CodeAnalysis.DisallowNullAttribute]
         public System.Net.Sockets.LingerOption? LingerState { get { throw null; } set { } }
@@ -398,10 +400,12 @@ namespace System.Net.Sockets
         public int ReceiveFrom(byte[] buffer, System.Net.Sockets.SocketFlags socketFlags, ref System.Net.EndPoint remoteEP) { throw null; }
         public int ReceiveFrom(System.Span<byte> buffer, ref System.Net.EndPoint remoteEP) { throw null; }
         public int ReceiveFrom(System.Span<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, ref System.Net.EndPoint remoteEP) { throw null; }
+        public int ReceiveFrom(System.Span<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.SocketAddress remoteSocketAddress) { throw null; }
         public System.Threading.Tasks.Task<System.Net.Sockets.SocketReceiveFromResult> ReceiveFromAsync(System.ArraySegment<byte> buffer, System.Net.EndPoint remoteEndPoint) { throw null; }
         public System.Threading.Tasks.Task<System.Net.Sockets.SocketReceiveFromResult> ReceiveFromAsync(System.ArraySegment<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEndPoint) { throw null; }
         public System.Threading.Tasks.ValueTask<System.Net.Sockets.SocketReceiveFromResult> ReceiveFromAsync(System.Memory<byte> buffer, System.Net.EndPoint remoteEndPoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
         public System.Threading.Tasks.ValueTask<System.Net.Sockets.SocketReceiveFromResult> ReceiveFromAsync(System.Memory<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEndPoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
+        public System.Threading.Tasks.ValueTask<int> ReceiveFromAsync(System.Memory<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.SocketAddress remoteSocketAddress, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
         public bool ReceiveFromAsync(System.Net.Sockets.SocketAsyncEventArgs e) { throw null; }
         public int ReceiveMessageFrom(byte[] buffer, int offset, int size, ref System.Net.Sockets.SocketFlags socketFlags, ref System.Net.EndPoint remoteEP, out System.Net.Sockets.IPPacketInformation ipPacketInformation) { throw null; }
         public int ReceiveMessageFrom(System.Span<byte> buffer, ref System.Net.Sockets.SocketFlags socketFlags, ref System.Net.EndPoint remoteEP, out System.Net.Sockets.IPPacketInformation ipPacketInformation) { throw null; }
@@ -409,6 +413,7 @@ namespace System.Net.Sockets
         public System.Threading.Tasks.Task<System.Net.Sockets.SocketReceiveMessageFromResult> ReceiveMessageFromAsync(System.ArraySegment<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEndPoint) { throw null; }
         public System.Threading.Tasks.ValueTask<System.Net.Sockets.SocketReceiveMessageFromResult> ReceiveMessageFromAsync(System.Memory<byte> buffer, System.Net.EndPoint remoteEndPoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
         public System.Threading.Tasks.ValueTask<System.Net.Sockets.SocketReceiveMessageFromResult> ReceiveMessageFromAsync(System.Memory<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEndPoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
+        public System.Threading.Tasks.ValueTask<int> ReceiveMessageFromAsync(System.Memory<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.SocketAddress remoteEndPoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
         public bool ReceiveMessageFromAsync(System.Net.Sockets.SocketAsyncEventArgs e) { throw null; }
         public static void Select(System.Collections.IList? checkRead, System.Collections.IList? checkWrite, System.Collections.IList? checkError, int microSeconds) { }
         public static void Select(System.Collections.IList? checkRead, System.Collections.IList? checkWrite, System.Collections.IList? checkError, System.TimeSpan timeout) { }
@@ -442,6 +447,7 @@ namespace System.Net.Sockets
         public int SendTo(byte[] buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEP) { throw null; }
         public int SendTo(System.ReadOnlySpan<byte> buffer, System.Net.EndPoint remoteEP) { throw null; }
         public int SendTo(System.ReadOnlySpan<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEP) { throw null; }
+        public int SendTo(System.ReadOnlySpan<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.SocketAddress remoteSocketAddress) { throw null; }
         public System.Threading.Tasks.Task<int> SendToAsync(System.ArraySegment<byte> buffer, System.Net.EndPoint remoteEP) { throw null; }
         public System.Threading.Tasks.Task<int> SendToAsync(System.ArraySegment<byte> buffer, System.Net.Sockets.SocketFlags socketFlags, System.Net.EndPoint remoteEP) { throw null; }
         public bool SendToAsync(System.Net.Sockets.SocketAsyncEventArgs e) { throw null; }
@@ -810,6 +816,8 @@ namespace System.Net.Sockets
         public UnixDomainSocketEndPoint(string path) { }
         public override System.Net.Sockets.AddressFamily AddressFamily { get { throw null; } }
         public override System.Net.EndPoint Create(System.Net.SocketAddress socketAddress) { throw null; }
+        public override bool Equals([System.Diagnostics.CodeAnalysis.NotNullWhenAttribute(true)] object? obj) { throw null; }
+        public override int GetHashCode() { throw null; }
         public override System.Net.SocketAddress Serialize() { throw null; }
         public override string ToString() { throw null; }
     }

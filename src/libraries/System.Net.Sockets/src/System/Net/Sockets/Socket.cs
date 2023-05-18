@@ -822,7 +822,8 @@ namespace System.Net.Sockets
 
             ValidateForMultiConnect(isMultiEndpoint: false);
 
-            Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
+            //Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
+            SocketAddress socketAddress = remoteEP.Serialize();
             _pendingConnectRightEndPoint = remoteEP;
             _nonBlockingConnectInProgress = !Blocking;
 
@@ -1282,7 +1283,7 @@ namespace System.Net.Sockets
             Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
 
             int bytesTransferred;
-            SocketError errorCode = SocketPal.SendTo(_handle, buffer, offset, size, socketFlags, socketAddress.Buffer, socketAddress.Size, out bytesTransferred);
+            SocketError errorCode = SocketPal.SendTo(_handle, buffer, offset, size, socketFlags, socketAddress.Buffer, out bytesTransferred);
 
             // Throw an appropriate SocketException if the native call fails.
             if (errorCode != SocketError.Success)
@@ -1351,10 +1352,11 @@ namespace System.Net.Sockets
 
             ValidateBlockingMode();
 
+            // TODO call overload bellow or make common private core that takes either EP or SA
             Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
 
             int bytesTransferred;
-            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, socketAddress.Buffer, socketAddress.Size, out bytesTransferred);
+            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, socketAddress.Buffer, out bytesTransferred);
 
             // Throw an appropriate SocketException if the native call fails.
             if (errorCode != SocketError.Success)
@@ -1371,6 +1373,42 @@ namespace System.Net.Sockets
 
             // Save a copy of the EndPoint so we can use it for Create().
             _rightEndPoint ??= remoteEP;
+
+            return bytesTransferred;
+        }
+
+
+        /// <summary>
+        /// Sends data to a specific endpoint using the specified <see cref="SocketFlags"/>.
+        /// </summary>
+        /// <param name="buffer">A span of bytes that contains the data to be sent.</param>
+        /// <param name="socketFlags">A bitwise combination of the <see cref="SocketFlags"/> values.</param>
+        /// <param name="remoteSocketAddress">The <see cref="EndPoint"/> that represents the destination for the data.</param>
+        /// <returns>The number of bytes sent.</returns>
+        /// <exception cref="ArgumentNullException"><c>remoteEP</c> is <see langword="null" />.</exception>
+        /// <exception cref="SocketException">An error occurred when attempting to access the socket.</exception>
+        /// <exception cref="ObjectDisposedException">The <see cref="Socket"/> has been closed.</exception>
+        public int SendTo(ReadOnlySpan<byte> buffer, SocketFlags socketFlags, SocketAddress remoteSocketAddress)
+        {
+            ThrowIfDisposed();
+            ArgumentNullException.ThrowIfNull(remoteSocketAddress);
+
+            ValidateBlockingMode();
+
+            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, remoteSocketAddress.Buffer, out int bytesTransferred);
+
+            // Throw an appropriate SocketException if the native call fails.
+            if (errorCode != SocketError.Success)
+            {
+                UpdateSendSocketErrorForDisposed(ref errorCode);
+
+                UpdateStatusAfterSocketErrorAndThrowException(errorCode);
+            }
+            else if (SocketsTelemetry.Log.IsEnabled())
+            {
+                SocketsTelemetry.Log.BytesSent(bytesTransferred);
+                if (SocketType == SocketType.Dgram) SocketsTelemetry.Log.DatagramSent();
+            }
 
             return bytesTransferred;
         }
@@ -1830,6 +1868,59 @@ namespace System.Net.Sockets
 
                 // Save a copy of the EndPoint so we can use it for Create().
                 _rightEndPoint ??= endPointSnapshot;
+            }
+
+            if (socketException != null)
+            {
+                throw socketException;
+            }
+
+            return bytesTransferred;
+        }
+
+        /// <summary>
+        /// Receives a datagram into the data buffer, using the specified <see cref="SocketFlags"/>, and stores the endpoint.
+        /// </summary>
+        /// <param name="buffer">A span of bytes that is the storage location for received data.</param>
+        /// <param name="socketFlags">A bitwise combination of the <see cref="SocketFlags"/> values.</param>
+        /// <param name="remoteSocketAddress">An <see cref="EndPoint"/>, passed by reference, that represents the remote server.</param>
+        /// <returns>The number of bytes received.</returns>
+        /// <exception cref="ArgumentNullException"><c>remoteEP</c> is <see langword="null" />.</exception>
+        /// <exception cref="SocketException">An error occurred when attempting to access the socket.</exception>
+        /// <exception cref="ObjectDisposedException">The <see cref="Socket"/> has been closed.</exception>
+        public int ReceiveFrom(Span<byte> buffer, SocketFlags socketFlags, SocketAddress remoteSocketAddress)
+        {
+            ThrowIfDisposed();
+
+            // Should we validate AddressFamily? May be handy for new protocols if we don't
+            // ValidateReceiveFromEndpointAndState(remoteEP, nameof(remoteEP));
+
+            ValidateBlockingMode();
+
+            int bytesTransferred;
+            int addresssSize = 0;
+            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, socketFlags, remoteSocketAddress.Buffer, ref addresssSize, out bytesTransferred);
+
+            UpdateReceiveSocketErrorForDisposed(ref errorCode, bytesTransferred);
+            // If the native call fails we'll throw a SocketException.
+            SocketException? socketException = null;
+            if (errorCode != SocketError.Success)
+            {
+                socketException = new SocketException((int)errorCode);
+                UpdateStatusAfterSocketError(socketException);
+                if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, socketException);
+
+                if (socketException.SocketErrorCode != SocketError.MessageSize)
+                {
+                    throw socketException;
+                }
+            }
+            else if (SocketsTelemetry.Log.IsEnabled())
+            {
+                SocketsTelemetry.Log.BytesReceived(bytesTransferred);
+                if (SocketType == SocketType.Dgram) SocketsTelemetry.Log.DatagramReceived();
+                // TBD Do we need to pass it back?
+                //remoteSocketAddress.Size = addresssSize;
             }
 
             if (socketException != null)
@@ -2694,7 +2785,8 @@ namespace System.Net.Sockets
                     throw new NotSupportedException(SR.net_invalidversion);
                 }
 
-                e._socketAddress = Serialize(ref endPointSnapshot);
+                //e._socketAddress = Serialize(ref endPointSnapshot);
+                e._socketAddress = endPointSnapshot.Serialize();
                 _pendingConnectRightEndPoint = endPointSnapshot;
                 _nonBlockingConnectInProgress = false;
 
@@ -2861,7 +2953,8 @@ namespace System.Net.Sockets
             // WSARecvFrom; all that matters is that we generate a unique-to-this-call SocketAddress
             // with the right address family.
             EndPoint endPointSnapshot = e.RemoteEndPoint;
-            e._socketAddress = Serialize(ref endPointSnapshot);
+            //e._socketAddress = Serialize(ref endPointSnapshot);
+            e._socketAddress = e.RemoteEndPoint.Serialize();
 
             // DualMode sockets may have updated the endPointSnapshot, and it has to have the same AddressFamily as
             // e.m_SocketAddres for Create to work later.
@@ -2907,7 +3000,8 @@ namespace System.Net.Sockets
             // WSARecvMsg; all that matters is that we generate a unique-to-this-call SocketAddress
             // with the right address family.
             EndPoint endPointSnapshot = e.RemoteEndPoint;
-            e._socketAddress = Serialize(ref endPointSnapshot);
+            //e._socketAddress = Serialize(ref endPointSnapshot);
+            e._socketAddress = endPointSnapshot.Serialize();
 
             // DualMode may have updated the endPointSnapshot, and it has to have the same AddressFamily as
             // e.m_SocketAddres for Create to work later.
@@ -3004,7 +3098,8 @@ namespace System.Net.Sockets
 
             // Prepare SocketAddress
             EndPoint endPointSnapshot = e.RemoteEndPoint;
-            e._socketAddress = Serialize(ref endPointSnapshot);
+            //e._socketAddress = Serialize(ref endPointSnapshot);
+            e._socketAddress = endPointSnapshot.Serialize();
 
             // Prepare for and make the native call.
             e.StartOperationCommon(this, SocketAsyncOperation.SendTo);
@@ -3052,6 +3147,15 @@ namespace System.Net.Sockets
             isIPv6 = addressFamily == AddressFamily.InterNetworkV6;
         }
 
+        /*
+        internal static void GetIPProtocolInformation(AddressFamily addressFamily, SocketAddress socketAddress, out bool isIPv4, out bool isIPv6)
+        {
+            bool isIPv4MappedToIPv6 = socketAddress.Family == AddressFamily.InterNetworkV6 && socketAddress.GetIPAddress().IsIPv4MappedToIPv6;
+            isIPv4 = addressFamily == AddressFamily.InterNetwork || isIPv4MappedToIPv6; // DualMode
+            isIPv6 = addressFamily == AddressFamily.InterNetworkV6;
+        }
+        */
+
         internal static int GetAddressSize(EndPoint endPoint)
         {
             AddressFamily fam = endPoint.AddressFamily;
@@ -3080,13 +3184,14 @@ namespace System.Net.Sockets
             return IPEndPointExtensions.Serialize(remoteEP);
         }
 
-        private void DoConnect(EndPoint endPointSnapshot, Internals.SocketAddress socketAddress)
+        //private void DoConnect(EndPoint endPointSnapshot, Internals.SocketAddress socketAddress)
+        private void DoConnect(EndPoint endPointSnapshot, SocketAddress socketAddress)
         {
             SocketsTelemetry.Log.ConnectStart(socketAddress);
             SocketError errorCode;
             try
             {
-                errorCode = SocketPal.Connect(_handle, socketAddress.Buffer, socketAddress.Size);
+                errorCode = SocketPal.Connect(_handle, socketAddress.SocketBuffer);
             }
             catch (Exception ex)
             {

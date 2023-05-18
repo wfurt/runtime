@@ -65,7 +65,7 @@ namespace System.Net.Sockets
         private int _acceptAddressBufferCount;
 
         // Internal SocketAddress buffer.
-        internal Internals.SocketAddress? _socketAddress;
+        internal SocketAddress? _socketAddress;
 
         // Misc state variables.
         private readonly bool _flowExecutionContext;
@@ -324,6 +324,12 @@ namespace System.Net.Sockets
             {
                 Complete();
             }
+        }
+
+        internal SocketAddress? RemoteSocketAddress
+        {
+            get { return _socketAddress; }
+            set { _socketAddress = value; }
         }
 
         internal void CopyBufferFrom(SocketAsyncEventArgs source)
@@ -922,9 +928,11 @@ namespace System.Net.Sockets
 
                 case SocketAsyncOperation.ReceiveFrom:
                     // Deal with incoming address.
-                    _socketAddress!.InternalSize = GetSocketAddressSize();
-                    Internals.SocketAddress socketAddressOriginal = IPEndPointExtensions.Serialize(_remoteEndPoint!);
-                    if (!socketAddressOriginal.Equals(_socketAddress))
+                    //_socketAddress!.InternalSize = GetSocketAddressSize();
+                    //Internals.SocketAddress socketAddressOriginal = IPEndPointExtensions.Serialize(_remoteEndPoint!);
+
+                    // _remoteEndPoint will be null if we are receiving with SocketAddress
+                    if (_remoteEndPoint != null && !_socketAddress!.Equals(_remoteEndPoint))
                     {
                         try
                         {
@@ -934,7 +942,7 @@ namespace System.Net.Sockets
                             }
                             else if (_remoteEndPoint!.AddressFamily == AddressFamily.InterNetworkV6 && _socketAddress.Family == AddressFamily.InterNetwork)
                             {
-                                _remoteEndPoint = new IPEndPoint(_socketAddress.GetIPAddress().MapToIPv6(), _socketAddress.GetPort());
+                                //_remoteEndPoint = new IPEndPoint(_socketAddress.GetIPAddress().MapToIPv6(), _socketAddress.GetPort());
                             }
                         }
                         catch
@@ -945,16 +953,19 @@ namespace System.Net.Sockets
 
                 case SocketAsyncOperation.ReceiveMessageFrom:
                     // Deal with incoming address.
-                    _socketAddress!.InternalSize = GetSocketAddressSize();
-                    socketAddressOriginal = IPEndPointExtensions.Serialize(_remoteEndPoint!);
-                    if (!socketAddressOriginal.Equals(_socketAddress))
+                    //_socketAddress!.InternalSize = GetSocketAddressSize();
+                    //socketAddressOriginal = IPEndPointExtensions.Serialize(_remoteEndPoint!);
+                    Console.WriteLine("ReceiveMessageFrom finished");
+                    Console.WriteLine("_remoteEndPoint = {0} _socketAddress={1} equal = {2}", _remoteEndPoint, _socketAddress?.Size, _socketAddress!.Equals(_remoteEndPoint!));
+                    if (_remoteEndPoint != null && !_socketAddress!.Equals(_remoteEndPoint!))
                     {
                         try
                         {
                             _remoteEndPoint = _remoteEndPoint!.Create(_socketAddress);
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            Console.WriteLine(ex);
                         }
                     }
 

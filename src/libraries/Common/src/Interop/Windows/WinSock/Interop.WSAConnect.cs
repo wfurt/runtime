@@ -18,5 +18,15 @@ internal static partial class Interop
             IntPtr outBuffer,
             IntPtr sQOS,
             IntPtr gQOS);
+
+        [LibraryImport(Interop.Libraries.Ws2_32, SetLastError = true)]
+        internal static partial SocketError WSAConnect(
+            SafeSocketHandle socketHandle,
+            Span<byte> socketAddress,
+            int socketAddressSize,
+            IntPtr inBuffer,
+            IntPtr outBuffer,
+            IntPtr sQOS,
+            IntPtr gQOS);
     }
 }

@@ -358,6 +358,12 @@ namespace System.Net
         public override bool Equals(object? comparand) { throw null; }
         public override int GetHashCode() { throw null; }
         public override string ToString() { throw null; }
+
+        public System.Memory<byte> SocketBuffer { get { throw null; } }
+        public bool Equals(System.Net.EndPoint comparand) { throw null; }
+        public bool TryGetAddress(out System.Int128 address) { throw null; }
+        public bool TryGetPort(out int port) { throw null; }
+        public byte[] Buffer;
     }
     public abstract partial class TransportContext
     {

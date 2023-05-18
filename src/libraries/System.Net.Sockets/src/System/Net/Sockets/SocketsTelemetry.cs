@@ -88,6 +88,17 @@ namespace System.Net.Sockets
         }
 
         [NonEvent]
+        public void ConnectStart(SocketAddress address)
+        {
+            Interlocked.Increment(ref _currentOutgoingConnectAttempts);
+
+            if (IsEnabled(EventLevel.Informational, EventKeywords.All))
+            {
+                ConnectStart(address.ToString());
+            }
+        }
+
+        [NonEvent]
         public void AfterConnect(SocketError error, string? exceptionMessage = null)
         {
             long newCount = Interlocked.Decrement(ref _currentOutgoingConnectAttempts);
