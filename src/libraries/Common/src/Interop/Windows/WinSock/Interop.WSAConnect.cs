@@ -22,7 +22,7 @@ internal static partial class Interop
         [LibraryImport(Interop.Libraries.Ws2_32, SetLastError = true)]
         internal static partial SocketError WSAConnect(
             SafeSocketHandle socketHandle,
-            Span<byte> socketAddress,
+            ReadOnlySpan<byte> socketAddress,
             int socketAddressSize,
             IntPtr inBuffer,
             IntPtr outBuffer,

@@ -241,7 +241,7 @@ namespace System.Net.Sockets
             return sent;
         }
 
-        private static unsafe int SysSend(SafeSocketHandle socket, SocketFlags flags, ReadOnlySpan<byte> buffer, ref int offset, ref int count, Span<byte> socketAddress, out Interop.Error errno)
+        private static unsafe int SysSend(SafeSocketHandle socket, SocketFlags flags, ReadOnlySpan<byte> buffer, ref int offset, ref int count, ReadOnlySpan<byte> socketAddress, out Interop.Error errno)
         {
             Debug.Assert(socket.IsSocket);
 
@@ -285,7 +285,7 @@ namespace System.Net.Sockets
             return sent;
         }
 
-        private static unsafe int SysSend(SafeSocketHandle socket, SocketFlags flags, IList<ArraySegment<byte>> buffers, ref int bufferIndex, ref int offset, Span<byte> socketAddress, out Interop.Error errno)
+        private static unsafe int SysSend(SafeSocketHandle socket, SocketFlags flags, IList<ArraySegment<byte>> buffers, ref int bufferIndex, ref int offset, ReadOnlySpan<byte> socketAddress, out Interop.Error errno)
         {
             Debug.Assert(socket.IsSocket);
 
@@ -648,7 +648,7 @@ namespace System.Net.Sockets
             return false;
         }
 
-        public static unsafe bool TryStartConnect(SafeSocketHandle socket, Span<byte> socketAddress, out SocketError errorCode)
+        public static unsafe bool TryStartConnect(SafeSocketHandle socket, ReadOnlySpan<byte> socketAddress, out SocketError errorCode)
         {
             //Debug.Assert(socketAddress != null, "Expected non-null socketAddress");
             Debug.Assert(socketAddress.Length > 0, $"Unexpected socketAddressLen: {socketAddress.Length}");
@@ -908,25 +908,25 @@ namespace System.Net.Sockets
             }
         }
 
-        public static bool TryCompleteSendTo(SafeSocketHandle socket, Span<byte> buffer, ref int offset, ref int count, SocketFlags flags, Span<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
+        public static bool TryCompleteSendTo(SafeSocketHandle socket, Span<byte> buffer, ref int offset, ref int count, SocketFlags flags, ReadOnlySpan<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
         {
             int bufferIndex = 0;
             return TryCompleteSendTo(socket, buffer, null, ref bufferIndex, ref offset, ref count, flags, socketAddress, ref bytesSent, out errorCode);
         }
 
-        public static bool TryCompleteSendTo(SafeSocketHandle socket, ReadOnlySpan<byte> buffer, SocketFlags flags, Span<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
+        public static bool TryCompleteSendTo(SafeSocketHandle socket, ReadOnlySpan<byte> buffer, SocketFlags flags, ReadOnlySpan<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
         {
             int bufferIndex = 0, offset = 0, count = buffer.Length;
             return TryCompleteSendTo(socket, buffer, null, ref bufferIndex, ref offset, ref count, flags, socketAddress, ref bytesSent, out errorCode);
         }
 
-        public static bool TryCompleteSendTo(SafeSocketHandle socket, IList<ArraySegment<byte>> buffers, ref int bufferIndex, ref int offset, SocketFlags flags, Span<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
+        public static bool TryCompleteSendTo(SafeSocketHandle socket, IList<ArraySegment<byte>> buffers, ref int bufferIndex, ref int offset, SocketFlags flags, ReadOnlySpan<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
         {
             int count = 0;
             return TryCompleteSendTo(socket, default(ReadOnlySpan<byte>), buffers, ref bufferIndex, ref offset, ref count, flags, socketAddress, ref bytesSent, out errorCode);
         }
 
-        public static bool TryCompleteSendTo(SafeSocketHandle socket, ReadOnlySpan<byte> buffer, IList<ArraySegment<byte>>? buffers, ref int bufferIndex, ref int offset, ref int count, SocketFlags flags, Span<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
+        public static bool TryCompleteSendTo(SafeSocketHandle socket, ReadOnlySpan<byte> buffer, IList<ArraySegment<byte>>? buffers, ref int bufferIndex, ref int offset, ref int count, SocketFlags flags, ReadOnlySpan<byte> socketAddress, ref int bytesSent, out SocketError errorCode)
         {
             bool successfulSend = false;
             long start = socket.IsUnderlyingHandleBlocking && socket.SendTimeout > 0 ? Environment.TickCount64 : 0; // Get ticks only if timeout is set and socket is blocking.
@@ -1040,9 +1040,9 @@ namespace System.Net.Sockets
             return SocketError.Success;
         }
 
-        public static unsafe SocketError GetSockName(SafeSocketHandle handle, byte* buffer, int* nameLen)
+        public static unsafe SocketError GetSockName(SafeSocketHandle handle, Span<byte> buffer, ref int nameLen)
         {
-            Interop.Error err = Interop.Sys.GetSockName(handle, buffer, nameLen);
+            Interop.Error err = Interop.Sys.GetSockName(handle, buffer, ref nameLen);
             return err == Interop.Error.SUCCESS ? SocketError.Success : GetSocketErrorForErrorCode(err);
         }
 
@@ -1077,12 +1077,12 @@ namespace System.Net.Sockets
             return err == Interop.Error.SUCCESS ? SocketError.Success : GetSocketErrorForErrorCode(err);
         }
 
-        public static unsafe SocketError Bind(SafeSocketHandle handle, ProtocolType socketProtocolType, byte[] buffer, int nameLen)
+        public static unsafe SocketError Bind(SafeSocketHandle handle, ProtocolType socketProtocolType, ReadOnlySpan<byte> buffer)
         {
             Interop.Error err;
             fixed (byte* rawBuffer = buffer)
             {
-                err = Interop.Sys.Bind(handle, socketProtocolType, rawBuffer, nameLen);
+                err = Interop.Sys.Bind(handle, socketProtocolType, rawBuffer, buffer.Length);
             }
 
             return err == Interop.Error.SUCCESS ? SocketError.Success : GetSocketErrorForErrorCode(err);
@@ -1094,7 +1094,7 @@ namespace System.Net.Sockets
             return err == Interop.Error.SUCCESS ? SocketError.Success : GetSocketErrorForErrorCode(err);
         }
 
-        public static SocketError Accept(SafeSocketHandle listenSocket, byte[] socketAddress, ref int socketAddressLen, out SafeSocketHandle socket)
+        public static SocketError Accept(SafeSocketHandle listenSocket, Span<byte> socketAddress, ref int socketAddressLen, out SafeSocketHandle socket)
         {
             socket = new SafeSocketHandle();
 
@@ -1119,7 +1119,7 @@ namespace System.Net.Sockets
             return errorCode;
         }
 
-        public static SocketError Connect(SafeSocketHandle handle, Memory<byte> socketAddress)
+        public static SocketError Connect(SafeSocketHandle handle, ReadOnlySpan<byte> socketAddress)
         {
             if (!handle.IsNonBlocking)
             {
@@ -1127,7 +1127,7 @@ namespace System.Net.Sockets
             }
 
             SocketError errorCode;
-            bool completed = TryStartConnect(handle, socketAddress.Span, out errorCode);
+            bool completed = TryStartConnect(handle, socketAddress, out errorCode);
             if (completed)
             {
                 handle.RegisterConnectResult(errorCode);
@@ -1197,7 +1197,7 @@ namespace System.Net.Sockets
             return completed ? errorCode : SocketError.WouldBlock;
         }
 
-        public static SocketError SendTo(SafeSocketHandle handle, byte[] buffer, int offset, int count, SocketFlags socketFlags, Memory<byte> socketAddress, out int bytesTransferred)
+        public static SocketError SendTo(SafeSocketHandle handle, byte[] buffer, int offset, int count, SocketFlags socketFlags, ReadOnlySpan<byte> socketAddress, out int bytesTransferred)
         {
             if (!handle.IsNonBlocking)
             {
@@ -1206,11 +1206,11 @@ namespace System.Net.Sockets
 
             bytesTransferred = 0;
             SocketError errorCode;
-            TryCompleteSendTo(handle, buffer, ref offset, ref count, socketFlags, socketAddress.Span, ref bytesTransferred, out errorCode);
+            TryCompleteSendTo(handle, buffer, ref offset, ref count, socketFlags, socketAddress, ref bytesTransferred, out errorCode);
             return errorCode;
         }
 
-        public static SocketError SendTo(SafeSocketHandle handle, ReadOnlySpan<byte> buffer, SocketFlags socketFlags, Memory<byte> socketAddress, out int bytesTransferred)
+        public static SocketError SendTo(SafeSocketHandle handle, ReadOnlySpan<byte> buffer, SocketFlags socketFlags, ReadOnlySpan<byte> socketAddress, out int bytesTransferred)
         {
             if (!handle.IsNonBlocking)
             {
@@ -1219,7 +1219,7 @@ namespace System.Net.Sockets
 
             bytesTransferred = 0;
             SocketError errorCode;
-            TryCompleteSendTo(handle, buffer, socketFlags, socketAddress.Span, ref bytesTransferred, out errorCode);
+            TryCompleteSendTo(handle, buffer, socketFlags, socketAddress, ref bytesTransferred, out errorCode);
             return errorCode;
         }
 
@@ -1266,10 +1266,10 @@ namespace System.Net.Sockets
             return completed ? errorCode : SocketError.WouldBlock;
         }
 
-        public static SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, byte[] buffer, int offset, int count, ref SocketFlags socketFlags, Internals.SocketAddress socketAddress, out Internals.SocketAddress receiveAddress, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
+        public static SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, byte[] buffer, int offset, int count, ref SocketFlags socketFlags, Memory<byte> socketAddress, out int socketAddressLength, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
         {
-            byte[] socketAddressBuffer = socketAddress.Buffer;
-            int socketAddressLen = socketAddress.Size;
+            //byte[] socketAddressBuffer = socketAddress.Buffer;
+            int socketAddressLen = socketAddress.Length;
 
             bool isIPv4, isIPv6;
             Socket.GetIPProtocolInformation(socket.AddressFamily, socketAddress, out isIPv4, out isIPv6);
@@ -1277,26 +1277,28 @@ namespace System.Net.Sockets
             SocketError errorCode;
             if (!handle.IsNonBlocking)
             {
-                errorCode = handle.AsyncContext.ReceiveMessageFrom(new Memory<byte>(buffer, offset, count), ref socketFlags, socketAddressBuffer, ref socketAddressLen, isIPv4, isIPv6, handle.ReceiveTimeout, out ipPacketInformation, out bytesTransferred);
+                errorCode = handle.AsyncContext.ReceiveMessageFrom(new Memory<byte>(buffer, offset, count), ref socketFlags, socketAddress, ref socketAddressLen, isIPv4, isIPv6, handle.ReceiveTimeout, out ipPacketInformation, out bytesTransferred);
             }
             else
             {
-                if (!TryCompleteReceiveMessageFrom(handle, new Span<byte>(buffer, offset, count), null, socketFlags, socketAddressBuffer, ref socketAddressLen, isIPv4, isIPv6, out bytesTransferred, out socketFlags, out ipPacketInformation, out errorCode))
+                if (!TryCompleteReceiveMessageFrom(handle, new Span<byte>(buffer, offset, count), null, socketFlags, socketAddress, ref socketAddressLen, isIPv4, isIPv6, out bytesTransferred, out socketFlags, out ipPacketInformation, out errorCode))
                 {
                     errorCode = SocketError.WouldBlock;
                 }
             }
 
-            socketAddress.InternalSize = socketAddressLen;
-            receiveAddress = socketAddress;
+            //socketAddress.InternalSize = socketAddressLen;
+            //receiveAddress = socketAddress;
+            socketAddressLength = socketAddressLen;
             return errorCode;
         }
 
 
-        public static SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, Span<byte> buffer, ref SocketFlags socketFlags, Internals.SocketAddress socketAddress, out Internals.SocketAddress receiveAddress, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
+        public static SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, Span<byte> buffer, ref SocketFlags socketFlags, Memory<byte> socketAddress, out int socketAddressLength, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
         {
-            byte[] socketAddressBuffer = socketAddress.Buffer;
-            int socketAddressLen = socketAddress.Size;
+            //byte[] socketAddressBuffer = socketAddress.Buffer;
+            //int socketAddressLen = socketAddress.Length;
+            socketAddressLength = socketAddress.Length;
 
             bool isIPv4, isIPv6;
             Socket.GetIPProtocolInformation(socket.AddressFamily, socketAddress, out isIPv4, out isIPv6);
@@ -1304,22 +1306,23 @@ namespace System.Net.Sockets
             SocketError errorCode;
             if (!handle.IsNonBlocking)
             {
-                errorCode = handle.AsyncContext.ReceiveMessageFrom(buffer, ref socketFlags, socketAddressBuffer, ref socketAddressLen, isIPv4, isIPv6, handle.ReceiveTimeout, out ipPacketInformation, out bytesTransferred);
+                errorCode = handle.AsyncContext.ReceiveMessageFrom(buffer, ref socketFlags, socketAddress, ref socketAddressLength, isIPv4, isIPv6, handle.ReceiveTimeout, out ipPacketInformation, out bytesTransferred);
             }
             else
             {
-                if (!TryCompleteReceiveMessageFrom(handle, buffer, null, socketFlags, socketAddressBuffer, ref socketAddressLen, isIPv4, isIPv6, out bytesTransferred, out socketFlags, out ipPacketInformation, out errorCode))
+                if (!TryCompleteReceiveMessageFrom(handle, buffer, null, socketFlags, socketAddress, ref socketAddressLength, isIPv4, isIPv6, out bytesTransferred, out socketFlags, out ipPacketInformation, out errorCode))
                 {
                     errorCode = SocketError.WouldBlock;
                 }
             }
 
-            socketAddress.InternalSize = socketAddressLen;
-            receiveAddress = socketAddress;
+            //socketAddress.Size = socketAddressLen;
+            //receiveAddress = socketAddress.Slice(0, socketAddressLen);
+
             return errorCode;
         }
 
-        public static SocketError ReceiveFrom(SafeSocketHandle handle, byte[] buffer, int offset, int count, SocketFlags socketFlags, byte[] socketAddress, ref int socketAddressLen, out int bytesTransferred)
+        public static SocketError ReceiveFrom(SafeSocketHandle handle, byte[] buffer, int offset, int count, SocketFlags socketFlags, Span<byte> socketAddress, ref int socketAddressLen, out int bytesTransferred)
         {
             if (!handle.IsNonBlocking)
             {
@@ -1331,7 +1334,7 @@ namespace System.Net.Sockets
             return completed ? errorCode : SocketError.WouldBlock;
         }
 
-        public static SocketError ReceiveFrom(SafeSocketHandle handle, Span<byte> buffer, SocketFlags socketFlags, byte[] socketAddress, ref int socketAddressLen, out int bytesTransferred)
+        public static SocketError ReceiveFrom(SafeSocketHandle handle, Span<byte> buffer, SocketFlags socketFlags, Span<byte> socketAddress, ref int socketAddressLen, out int bytesTransferred)
         {
             if (!handle.IsNonBlocking)
             {

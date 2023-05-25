@@ -67,8 +67,6 @@
              Link="Common\System\Net\ExceptionCheck.cs" />
     <Compile Include="$(CommonPath)System\Net\RangeValidationHelpers.cs"
              Link="Common\System\Net\RangeValidationHelpers.cs" />
-    <Compile Include="$(CommonPath)System\Net\SocketAddress.cs"
-             Link="Common\System\Net\SocketAddress.cs" />
     <Compile Include="$(CommonPath)System\Net\TcpValidationHelpers.cs"
              Link="Common\System\Net\TcpValidationHelpers.cs" />
     <Compile Include="$(CommonPath)System\Net\SocketProtocolSupportPal.cs"
@@ -288,6 +286,7 @@
     <Reference Include="System.Collections" />
     <Reference Include="System.Collections.Concurrent" />
     <Reference Include="System.Console" Condition="'$(Configuration)' == 'Debug'" />
+    <Reference Include="System.Diagnostics.StackTrace" Condition="'$(Configuration)' == 'Debug'" />
     <Reference Include="System.Diagnostics.Tracing" />
     <Reference Include="System.Memory" />
     <Reference Include="System.Net.NameResolution" />

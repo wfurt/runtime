@@ -12,7 +12,7 @@ internal static partial class Interop
         [LibraryImport(Interop.Libraries.Ws2_32, SetLastError = true)]
         internal static partial IntPtr accept(
             SafeSocketHandle socketHandle,
-            byte[] socketAddress,
+            ReadOnlySpan<byte> socketAddress,
             ref int socketAddressSize);
     }
 }

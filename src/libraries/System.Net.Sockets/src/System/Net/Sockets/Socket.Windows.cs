@@ -26,12 +26,12 @@ namespace System.Net.Sockets
         private sealed class CachedSerializedEndPoint
         {
             public readonly IPEndPoint IPEndPoint;
-            public readonly Internals.SocketAddress SocketAddress;
+            public readonly SocketAddress SocketAddress;
 
             public CachedSerializedEndPoint(IPAddress address)
             {
                 IPEndPoint = new IPEndPoint(address, 0);
-                SocketAddress = IPEndPointExtensions.Serialize(IPEndPoint);
+                SocketAddress = IPEndPoint.Serialize();
             }
         }
 
@@ -70,16 +70,9 @@ namespace System.Net.Sockets
             IPAddress tempAddress = _addressFamily == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any;
             IPEndPoint ep = new IPEndPoint(tempAddress, 0);
 
-            Internals.SocketAddress socketAddress = IPEndPointExtensions.Serialize(ep);
-            unsafe
-            {
-                fixed (byte* bufferPtr = socketAddress.Buffer)
-                fixed (int* sizePtr = &socketAddress.InternalSize)
-                {
-                    errorCode = SocketPal.GetSockName(_handle, bufferPtr, sizePtr);
-                }
-            }
-
+            SocketAddress socketAddress = new SocketAddress(_addressFamily);
+            int socketAddressLength = socketAddress.Size;
+            errorCode = SocketPal.GetSockName(_handle, socketAddress.SocketBuffer.Span, ref socketAddressLength);
             if (errorCode == SocketError.Success)
             {
                 _rightEndPoint = ep.Create(socketAddress);

@@ -138,10 +138,13 @@ namespace System.Net.Sockets
             return errorCode;
         }
 
-        public static unsafe SocketError GetSockName(SafeSocketHandle handle, byte* buffer, int* nameLen)
+        public static unsafe SocketError GetSockName(SafeSocketHandle handle, Span<byte> buffer, ref int nameLen)
         {
-            SocketError errorCode = Interop.Winsock.getsockname(handle, buffer, nameLen);
-            return errorCode == SocketError.SocketError ? GetLastSocketError() : SocketError.Success;
+            fixed (byte* bufferPtr = &MemoryMarshal.GetReference(buffer))
+            {
+                SocketError errorCode = Interop.Winsock.getsockname(handle, bufferPtr, ref nameLen);
+                return errorCode == SocketError.SocketError ? GetLastSocketError() : SocketError.Success;
+            }
         }
 
         public static SocketError GetAvailable(SafeSocketHandle handle, out int available)
@@ -164,9 +167,10 @@ namespace System.Net.Sockets
             }
         }
 
-        public static SocketError Bind(SafeSocketHandle handle, ProtocolType _ /*socketProtocolType*/, byte[] buffer, int nameLen)
+        //public static SocketError Bind(SafeSocketHandle handle, ProtocolType _ /*socketProtocolType*/, byte[] buffer, int nameLen)
+        public static SocketError Bind(SafeSocketHandle handle, ProtocolType _ /*socketProtocolType*/, ReadOnlySpan<byte> buffer)
         {
-            SocketError errorCode = Interop.Winsock.bind(handle, buffer, nameLen);
+            SocketError errorCode = Interop.Winsock.bind(handle, buffer);
             return errorCode == SocketError.SocketError ? GetLastSocketError() : SocketError.Success;
         }
 
@@ -176,7 +180,7 @@ namespace System.Net.Sockets
             return errorCode == SocketError.SocketError ? GetLastSocketError() : SocketError.Success;
         }
 
-        public static SocketError Accept(SafeSocketHandle listenSocket, byte[] socketAddress, ref int socketAddressSize, out SafeSocketHandle socket)
+        public static SocketError Accept(SafeSocketHandle listenSocket, ReadOnlySpan<byte> socketAddress, ref int socketAddressSize, out SafeSocketHandle socket)
         {
             socket = new SafeSocketHandle();
             Marshal.InitHandle(socket, Interop.Winsock.accept(listenSocket, socketAddress, ref socketAddressSize));
@@ -186,12 +190,11 @@ namespace System.Net.Sockets
             return socket.IsInvalid ? GetLastSocketError() : SocketError.Success;
         }
 
-        //public static SocketError Connect(SafeSocketHandle handle, byte[] peerAddress, int peerAddressLen)
-        public static SocketError Connect(SafeSocketHandle handle, Memory<byte> peerAddress)
+        public static SocketError Connect(SafeSocketHandle handle, ReadOnlySpan<byte> peerAddress)
         {
             SocketError errorCode = Interop.Winsock.WSAConnect(
                 handle,
-                peerAddress.Span,
+                peerAddress,
                 peerAddress.Length,
                 IntPtr.Zero,
                 IntPtr.Zero,
@@ -301,15 +304,15 @@ namespace System.Net.Sockets
             }
         }
 
-        public static SocketError SendTo(SafeSocketHandle handle, byte[] buffer, int offset, int size, SocketFlags socketFlags, Memory<byte> peerAddress, out int bytesTransferred) =>
+        public static SocketError SendTo(SafeSocketHandle handle, byte[] buffer, int offset, int size, SocketFlags socketFlags, ReadOnlySpan<byte> peerAddress, out int bytesTransferred) =>
             SendTo(handle, buffer.AsSpan(offset, size), socketFlags, peerAddress, out bytesTransferred);
 
-        public static unsafe SocketError SendTo(SafeSocketHandle handle, ReadOnlySpan<byte> buffer, SocketFlags socketFlags, Memory<byte> peerAddress, out int bytesTransferred)
+        public static unsafe SocketError SendTo(SafeSocketHandle handle, ReadOnlySpan<byte> buffer, SocketFlags socketFlags, ReadOnlySpan<byte> peerAddress, out int bytesTransferred)
         {
             int bytesSent;
             fixed (byte* bufferPtr = &MemoryMarshal.GetReference(buffer))
             {
-                bytesSent = Interop.Winsock.sendto(handle, bufferPtr, buffer.Length, socketFlags, peerAddress.Span, peerAddress.Length);
+                bytesSent = Interop.Winsock.sendto(handle, bufferPtr, buffer.Length, socketFlags, peerAddress, peerAddress.Length);
             }
 
             if (bytesSent == (int)SocketError.SocketError)
@@ -434,25 +437,26 @@ namespace System.Net.Sockets
             return new IPPacketInformation(address, (int)controlBuffer->index);
         }
 
-        public static unsafe SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, byte[] buffer, int offset, int size, ref SocketFlags socketFlags, Internals.SocketAddress socketAddress, out Internals.SocketAddress receiveAddress, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
+        public static unsafe SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, byte[] buffer, int offset, int size, ref SocketFlags socketFlags, Memory<byte> socketAddress, out int socketAddressLength, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
         {
-            return ReceiveMessageFrom(socket, handle, new Span<byte>(buffer, offset, size), ref socketFlags, socketAddress, out receiveAddress, out ipPacketInformation, out bytesTransferred);
+            return ReceiveMessageFrom(socket, handle, new Span<byte>(buffer, offset, size), ref socketFlags, socketAddress, out socketAddressLength, out ipPacketInformation, out bytesTransferred);
         }
 
-        public static unsafe SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, Span<byte> buffer, ref SocketFlags socketFlags, Internals.SocketAddress socketAddress, out Internals.SocketAddress receiveAddress, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
+        public static unsafe SocketError ReceiveMessageFrom(Socket socket, SafeSocketHandle handle, Span<byte> buffer, ref SocketFlags socketFlags, Memory<byte> socketAddress, out int socketAddressLength, out IPPacketInformation ipPacketInformation, out int bytesTransferred)
         {
             bool ipv4, ipv6;
             Socket.GetIPProtocolInformation(socket.AddressFamily, socketAddress, out ipv4, out ipv6);
 
             bytesTransferred = 0;
-            receiveAddress = socketAddress;
+            var receiveAddress = socketAddress;
+            socketAddressLength = socketAddress.Length;
             ipPacketInformation = default(IPPacketInformation);
             fixed (byte* bufferPtr = &MemoryMarshal.GetReference(buffer))
-            fixed (byte* ptrSocketAddress = socketAddress.Buffer)
+            fixed (byte* ptrSocketAddress = socketAddress.Span)
             {
                 Interop.Winsock.WSAMsg wsaMsg;
                 wsaMsg.socketAddress = (IntPtr)ptrSocketAddress;
-                wsaMsg.addressLength = (uint)socketAddress.Size;
+                wsaMsg.addressLength = (uint)socketAddress.Length;
                 wsaMsg.flags = socketFlags;
 
                 WSABuffer wsaBuffer;
@@ -513,10 +517,10 @@ namespace System.Net.Sockets
             return SocketError.Success;
         }
 
-        public static unsafe SocketError ReceiveFrom(SafeSocketHandle handle, byte[] buffer, int offset, int size, SocketFlags _ /*socketFlags*/, byte[] socketAddress, ref int addressLength, out int bytesTransferred) =>
+        public static unsafe SocketError ReceiveFrom(SafeSocketHandle handle, byte[] buffer, int offset, int size, SocketFlags _ /*socketFlags*/, Span<byte> socketAddress, ref int addressLength, out int bytesTransferred) =>
             ReceiveFrom(handle, buffer.AsSpan(offset, size), SocketFlags.None, socketAddress, ref addressLength, out bytesTransferred);
 
-        public static unsafe SocketError ReceiveFrom(SafeSocketHandle handle, Span<byte> buffer, SocketFlags socketFlags, byte[] socketAddress, ref int addressLength, out int bytesTransferred)
+        public static unsafe SocketError ReceiveFrom(SafeSocketHandle handle, Span<byte> buffer, SocketFlags socketFlags, Span<byte> socketAddress, ref int addressLength, out int bytesTransferred)
         {
             int bytesReceived;
 

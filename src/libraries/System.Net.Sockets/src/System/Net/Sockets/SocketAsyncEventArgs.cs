@@ -549,7 +549,9 @@ namespace System.Net.Sockets
             // AcceptEx needs a single buffer that's the size of two native sockaddr buffers with 16
             // extra bytes each. It can also take additional buffer space in front of those special
             // sockaddr structures that can be filled in with initial data coming in on a connection.
-            _acceptAddressBufferCount = 2 * (Socket.GetAddressSize(_currentSocket!._rightEndPoint!) + 16);
+
+
+            _acceptAddressBufferCount = 2 * (_currentSocket!.GetAddressSize() + 16);
 
             // If our caller specified a buffer (willing to get received data with the Accept) then
             // it needs to be large enough for the two special sockaddr buffers that AcceptEx requires.
@@ -872,13 +874,12 @@ namespace System.Net.Sockets
             {
                 case SocketAsyncOperation.Accept:
                     // Get the endpoint.
-                    Internals.SocketAddress remoteSocketAddress = IPEndPointExtensions.Serialize(_currentSocket!._rightEndPoint!);
+                    Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_currentSocket!.AddressFamily)];
 
-                    socketError = FinishOperationAccept(remoteSocketAddress);
-
+                    socketError = FinishOperationAccept(socketAddressBuffer, out int length);
                     if (socketError == SocketError.Success)
                     {
-                        _acceptSocket = _currentSocket.UpdateAcceptSocket(_acceptSocket!, _currentSocket._rightEndPoint!.Create(remoteSocketAddress));
+                        _acceptSocket = _currentSocket.UpdateAcceptSocket(_acceptSocket!, Socket.CreateEndPoint(_currentSocket!._rightEndPoint!, socketAddressBuffer.Slice(0, length)));
 
                         if (NetEventSource.Log.IsEnabled())
                         {
@@ -936,9 +937,11 @@ namespace System.Net.Sockets
                     {
                         try
                         {
+                            _remoteEndPoint = Socket.CreateEndPoint(_remoteEndPoint, _socketAddress.SocketBuffer.Span);
+
                             if (_remoteEndPoint!.AddressFamily == _socketAddress.Family)
                             {
-                                _remoteEndPoint = _remoteEndPoint!.Create(_socketAddress);
+                            //    _remoteEndPoint = _remoteEndPoint!.Create(_socketAddress);
                             }
                             else if (_remoteEndPoint!.AddressFamily == AddressFamily.InterNetworkV6 && _socketAddress.Family == AddressFamily.InterNetwork)
                             {
@@ -959,9 +962,10 @@ namespace System.Net.Sockets
                     Console.WriteLine("_remoteEndPoint = {0} _socketAddress={1} equal = {2}", _remoteEndPoint, _socketAddress?.Size, _socketAddress!.Equals(_remoteEndPoint!));
                     if (_remoteEndPoint != null && !_socketAddress!.Equals(_remoteEndPoint!))
                     {
+                        _remoteEndPoint = Socket.CreateEndPoint(_remoteEndPoint, _socketAddress.SocketBuffer.Span);
                         try
                         {
-                            _remoteEndPoint = _remoteEndPoint!.Create(_socketAddress);
+                        //    _remoteEndPoint = _remoteEndPoint!.Create(_socketAddress);
                         }
                         catch (Exception ex)
                         {

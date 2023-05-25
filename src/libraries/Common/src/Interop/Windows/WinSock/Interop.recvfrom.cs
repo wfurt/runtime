@@ -18,5 +18,14 @@ internal static partial class Interop
             SocketFlags socketFlags,
             byte[] socketAddress,
             ref int socketAddressSize);
+
+        [LibraryImport(Interop.Libraries.Ws2_32, SetLastError = true)]
+       internal static unsafe partial int recvfrom(
+           SafeSocketHandle socketHandle,
+           byte* pinnedBuffer,
+           int len,
+           SocketFlags socketFlags,
+           Span<byte> socketAddress,
+           ref int socketAddressSize);
     }
 }

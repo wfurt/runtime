@@ -1079,7 +1079,7 @@ namespace System.Net.Sockets
                     ValueTask.FromException<SocketReceiveFromResult>(CreateException(error));
             }
 
-            internal ValueTask<int> ReceiveFromSocketAddressAsync(Socket socket, CancellationToken cancellationToken)
+            public ValueTask<int> ReceiveFromSocketAddressAsync(Socket socket, CancellationToken cancellationToken)
             {
                 if (socket.ReceiveFromAsync(this, cancellationToken))
                 {

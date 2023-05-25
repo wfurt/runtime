@@ -3,6 +3,7 @@
 
 using System.Runtime.InteropServices;
 using System.Net.Sockets;
+using System;
 
 internal static partial class Interop
 {
@@ -13,5 +14,21 @@ internal static partial class Interop
             SafeSocketHandle socketHandle,
             byte[] socketAddress,
             int socketAddressSize);
+
+        [LibraryImport(Interop.Libraries.Ws2_32, SetLastError = true)]
+        internal static unsafe partial SocketError bind(
+            SafeSocketHandle socketHandle,
+            byte* socketAddress,
+            int socketAddressSize);
+
+        internal static unsafe SocketError bind(
+            SafeSocketHandle socketHandle,
+            ReadOnlySpan<byte> socketAddress)
+        {
+            fixed (byte* ptr = &MemoryMarshal.GetReference(socketAddress))
+            {
+                return bind(socketHandle, ptr, socketAddress.Length);
+            }
+        }
     }
 }

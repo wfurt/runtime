@@ -1,15 +1,16 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Buffers.Binary;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Net.Internals;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,8 @@ namespace System.Net.Sockets
         internal const int DefaultCloseTimeout = -1; // NOTE: changing this default is a breaking change.
 
         private static readonly IPAddress s_IPAddressAnyMapToIPv6 = IPAddress.Any.MapToIPv6();
+        private static readonly IPEndPoint s_IPEndPoint4 = new IPEndPoint(IPAddress.None, 0);
+        private static readonly IPEndPoint s_IPEndPoint6 = new IPEndPoint(IPAddress.IPv6None, 0);
 
         private SafeSocketHandle _handle;
 
@@ -139,19 +142,15 @@ namespace System.Net.Sockets
                     // Try to get the address of the socket.
                     Span<byte> buffer = stackalloc byte[SocketPal.MaximumAddressSize];
                     int bufferLength = buffer.Length;
-                    fixed (byte* bufferPtr = buffer)
+                    if (SocketPal.GetSockName(handle, buffer, ref bufferLength) != SocketError.Success)
                     {
-                        if (SocketPal.GetSockName(handle, bufferPtr, &bufferLength) != SocketError.Success)
-                        {
-                            return;
-                        }
+                        return;
                     }
 
                     Debug.Assert(bufferLength <= buffer.Length);
 
                     // Try to get the local end point.  That will in turn enable the remote
                     // end point to be retrieved on-demand when the property is accessed.
-                    Internals.SocketAddress? socketAddress = null;
                     switch (_addressFamily)
                     {
                         case AddressFamily.InterNetwork:
@@ -169,8 +168,7 @@ namespace System.Net.Sockets
                             break;
 
                         case AddressFamily.Unix:
-                            socketAddress = new Internals.SocketAddress(AddressFamily.Unix, buffer.Slice(0, bufferLength));
-                            _rightEndPoint = new UnixDomainSocketEndPoint(IPEndPointExtensions.GetNetSocketAddress(socketAddress));
+                            _rightEndPoint = new UnixDomainSocketEndPoint(buffer.Slice(0, bufferLength));
                             break;
                     }
 
@@ -202,8 +200,7 @@ namespace System.Net.Sockets
                                             break;
 
                                         case AddressFamily.Unix:
-                                            socketAddress = new Internals.SocketAddress(AddressFamily.Unix, buffer.Slice(0, bufferLength));
-                                            _remoteEndPoint = new UnixDomainSocketEndPoint(IPEndPointExtensions.GetNetSocketAddress(socketAddress));
+                                            _remoteEndPoint = new UnixDomainSocketEndPoint(buffer.Slice(0, bufferLength));
                                             break;
                                     }
 
@@ -300,22 +297,14 @@ namespace System.Net.Sockets
 
                 if (_localEndPoint == null)
                 {
-                    Internals.SocketAddress socketAddress = IPEndPointExtensions.Serialize(_rightEndPoint);
-
-                    unsafe
+                    int bufferSize = GetAddressSize();
+                    Span<byte> buffer = stackalloc byte[bufferSize];
+                    SocketError errorCode = SocketPal.GetSockName(_handle, buffer, ref bufferSize);
+                    if (errorCode != SocketError.Success)
                     {
-                        fixed (byte* buffer = socketAddress.Buffer)
-                        fixed (int* bufferSize = &socketAddress.InternalSize)
-                        {
-                            // This may throw ObjectDisposedException.
-                            SocketError errorCode = SocketPal.GetSockName(_handle, buffer, bufferSize);
-                            if (errorCode != SocketError.Success)
-                            {
-                                UpdateStatusAfterSocketErrorAndThrowException(errorCode);
-                            }
-                        }
+                        UpdateStatusAfterSocketErrorAndThrowException(errorCode);
                     }
-                    _localEndPoint = _rightEndPoint.Create(socketAddress);
+                    _localEndPoint = CreateEndPoint(_rightEndPoint, buffer.Slice(0, bufferSize));
                 }
 
                 return _localEndPoint;
@@ -338,16 +327,14 @@ namespace System.Net.Sockets
                         return null;
                     }
 
-                    Internals.SocketAddress socketAddress =
-                        _addressFamily == AddressFamily.InterNetwork || _addressFamily == AddressFamily.InterNetworkV6 ?
-                            IPEndPointExtensions.Serialize(_rightEndPoint) :
-                            new Internals.SocketAddress(_addressFamily, SocketPal.MaximumAddressSize); // may be different size than _rightEndPoint.
+                    int bufferSize = SocketAddressPal.GetMaxAddresFamilySize(_addressFamily);
+                    Span<byte> buffer = stackalloc byte[bufferSize];
 
                     // This may throw ObjectDisposedException.
                     SocketError errorCode = SocketPal.GetPeerName(
                         _handle,
-                        socketAddress.Buffer,
-                        ref socketAddress.InternalSize);
+                        buffer,
+                        ref bufferSize);
 
                     if (errorCode != SocketError.Success)
                     {
@@ -356,7 +343,7 @@ namespace System.Net.Sockets
 
                     try
                     {
-                        _remoteEndPoint = _rightEndPoint.Create(socketAddress);
+                        _remoteEndPoint = CreateEndPoint(_rightEndPoint, buffer.Slice(0, bufferSize));
                     }
                     catch
                     {
@@ -748,11 +735,10 @@ namespace System.Net.Sockets
 
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"localEP:{localEP}");
 
-            Internals.SocketAddress socketAddress = Serialize(ref localEP);
-            DoBind(localEP, socketAddress);
+            DoBind(localEP);
         }
 
-        private void DoBind(EndPoint endPointSnapshot, Internals.SocketAddress socketAddress)
+        private void DoBind(EndPoint endPointSnapshot, SocketAddress? socketAddress = null)
         {
             // Mitigation for Blue Screen of Death (Win7, maybe others).
             IPEndPoint? ipEndPoint = endPointSnapshot as IPEndPoint;
@@ -761,12 +747,17 @@ namespace System.Net.Sockets
                 UpdateStatusAfterSocketErrorAndThrowException(SocketError.InvalidArgument);
             }
 
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            if (socketAddress == null)
+            {
+                SerializeTo(endPointSnapshot, IsDualMode, socketAddressBuffer, out int length);
+                socketAddressBuffer = socketAddressBuffer.Slice(0, length);
+            }
             // This may throw ObjectDisposedException.
             SocketError errorCode = SocketPal.Bind(
                 _handle,
                 _protocolType,
-                socketAddress.Buffer,
-                socketAddress.Size);
+                socketAddress != null ? socketAddress.SocketBuffer.Span : socketAddressBuffer);
 
             // Throw an appropriate SocketException if the native call fails.
             if (errorCode != SocketError.Success)
@@ -822,12 +813,11 @@ namespace System.Net.Sockets
 
             ValidateForMultiConnect(isMultiEndpoint: false);
 
-            //Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
-            SocketAddress socketAddress = remoteEP.Serialize();
             _pendingConnectRightEndPoint = remoteEP;
             _nonBlockingConnectInProgress = !Blocking;
 
-            DoConnect(remoteEP, socketAddress);
+            SocketsTelemetry.Log.ConnectStart(remoteEP);
+            DoConnect(remoteEP);
         }
 
         public void Connect(IPAddress address, int port)
@@ -852,8 +842,8 @@ namespace System.Net.Sockets
                 throw new NotSupportedException(SR.net_invalidversion);
             }
 
-            IPEndPoint remoteEP = new IPEndPoint(address, port);
-            Connect(remoteEP);
+            SocketsTelemetry.Log.ConnectStart(address, port);
+            DoConnect(null, address, port);
         }
 
         public void Connect(string host, int port)
@@ -917,7 +907,7 @@ namespace System.Net.Sockets
                 {
                     try
                     {
-                        Connect(new IPEndPoint(address, port));
+                        Connect(address, port);
                         lastex = null;
                         break;
                     }
@@ -1004,23 +994,19 @@ namespace System.Net.Sockets
 
             ValidateBlockingMode();
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"SRC:{LocalEndPoint}");
-
-            Internals.SocketAddress socketAddress =
-                _addressFamily == AddressFamily.InterNetwork || _addressFamily == AddressFamily.InterNetworkV6 ?
-                    IPEndPointExtensions.Serialize(_rightEndPoint) :
-                    new Internals.SocketAddress(_addressFamily, SocketPal.MaximumAddressSize); // may be different size.
-
-            if (SocketsTelemetry.Log.IsEnabled()) SocketsTelemetry.Log.AcceptStart(socketAddress);
+            if (SocketsTelemetry.Log.IsEnabled()) SocketsTelemetry.Log.AcceptStart(_rightEndPoint);
 
             // This may throw ObjectDisposedException.
             SafeSocketHandle acceptedSocketHandle;
             SocketError errorCode;
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            int socketAddressLength = socketAddressBuffer.Length;
             try
             {
                 errorCode = SocketPal.Accept(
                     _handle,
-                    socketAddress.Buffer,
-                    ref socketAddress.InternalSize,
+                    socketAddressBuffer,
+                    ref socketAddressLength,
                     out acceptedSocketHandle);
             }
             catch (Exception ex)
@@ -1045,7 +1031,8 @@ namespace System.Net.Sockets
 
             Debug.Assert(!acceptedSocketHandle.IsInvalid);
 
-            Socket socket = CreateAcceptSocket(acceptedSocketHandle, _rightEndPoint.Create(socketAddress));
+            Socket socket = CreateAcceptSocket(acceptedSocketHandle,
+                                               CreateEndPoint(_rightEndPoint, socketAddressBuffer.Slice(0, socketAddressLength)));
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Accepted(socket, socket.RemoteEndPoint!, socket.LocalEndPoint);
             return socket;
         }
@@ -1280,10 +1267,12 @@ namespace System.Net.Sockets
             ValidateBlockingMode();
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"SRC:{LocalEndPoint} size:{size} remoteEP:{remoteEP}");
 
-            Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            Socket.SerializeTo(remoteEP, IsDualMode, socketAddressBuffer, out int length);
+            socketAddressBuffer = socketAddressBuffer.Slice(0, length);
 
             int bytesTransferred;
-            SocketError errorCode = SocketPal.SendTo(_handle, buffer, offset, size, socketFlags, socketAddress.Buffer, out bytesTransferred);
+            SocketError errorCode = SocketPal.SendTo(_handle, buffer, offset, size, socketFlags, socketAddressBuffer, out bytesTransferred);
 
             // Throw an appropriate SocketException if the native call fails.
             if (errorCode != SocketError.Success)
@@ -1352,11 +1341,12 @@ namespace System.Net.Sockets
 
             ValidateBlockingMode();
 
-            // TODO call overload bellow or make common private core that takes either EP or SA
-            Internals.SocketAddress socketAddress = Serialize(ref remoteEP);
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            Socket.SerializeTo(remoteEP, IsDualMode, socketAddressBuffer, out int length);
+            socketAddressBuffer = socketAddressBuffer.Slice(0, length);
 
             int bytesTransferred;
-            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, socketAddress.Buffer, out bytesTransferred);
+            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, socketAddressBuffer, out bytesTransferred);
 
             // Throw an appropriate SocketException if the native call fails.
             if (errorCode != SocketError.Success)
@@ -1395,7 +1385,7 @@ namespace System.Net.Sockets
 
             ValidateBlockingMode();
 
-            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, remoteSocketAddress.Buffer, out int bytesTransferred);
+            SocketError errorCode = SocketPal.SendTo(_handle, buffer, socketFlags, remoteSocketAddress.SocketBuffer.Span, out int bytesTransferred);
 
             // Throw an appropriate SocketException if the native call fails.
             if (errorCode != SocketError.Success)
@@ -1572,16 +1562,15 @@ namespace System.Net.Sockets
             // WSARecvMsg; all that matters is that we generate a unique-to-this-call SocketAddress
             // with the right address family.
             EndPoint endPointSnapshot = remoteEP;
-            Internals.SocketAddress socketAddress = Serialize(ref endPointSnapshot);
+            SocketAddress socketAddress = SerializeSA(remoteEP, IsDualMode);
 
-            // Save a copy of the original EndPoint.
-            Internals.SocketAddress socketAddressOriginal = IPEndPointExtensions.Serialize(endPointSnapshot);
 
             SetReceivingPacketInformation();
 
-            Internals.SocketAddress receiveAddress;
             int bytesTransferred;
-            SocketError errorCode = SocketPal.ReceiveMessageFrom(this, _handle, buffer, offset, size, ref socketFlags, socketAddress, out receiveAddress, out ipPacketInformation, out bytesTransferred);
+            int socketAddressLength;
+            SocketError errorCode = SocketPal.ReceiveMessageFrom(this, _handle, buffer, offset, size, ref socketFlags, socketAddress.SocketBuffer, out socketAddressLength, out ipPacketInformation, out bytesTransferred);
+            socketAddress.Size = socketAddressLength;
 
             UpdateReceiveSocketErrorForDisposed(ref errorCode, bytesTransferred);
             // Throw an appropriate SocketException if the native call fails.
@@ -1595,17 +1584,15 @@ namespace System.Net.Sockets
                 if (errorCode == SocketError.Success && SocketType == SocketType.Dgram) SocketsTelemetry.Log.DatagramReceived();
             }
 
-            if (!socketAddressOriginal.Equals(receiveAddress))
+            if (!socketAddress.Equals(remoteEP))
             {
                 try
                 {
-                    remoteEP = endPointSnapshot.Create(receiveAddress);
+                    remoteEP = CreateEndPoint(endPointSnapshot, socketAddress.SocketBuffer.Span);
                 }
                 catch
                 {
                 }
-                // Save a copy of the EndPoint so we can use it for Create().
-                _rightEndPoint ??= endPointSnapshot;
             }
 
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, errorCode);
@@ -1660,16 +1647,13 @@ namespace System.Net.Sockets
             // WSARecvMsg; all that matters is that we generate a unique-to-this-call SocketAddress
             // with the right address family.
             EndPoint endPointSnapshot = remoteEP;
-            Internals.SocketAddress socketAddress = Serialize(ref endPointSnapshot);
-
-            // Save a copy of the original EndPoint.
-            Internals.SocketAddress socketAddressOriginal = IPEndPointExtensions.Serialize(endPointSnapshot);
-
+            SocketAddress socketAddress = SerializeSA(endPointSnapshot, IsDualMode);
             SetReceivingPacketInformation();
 
-            Internals.SocketAddress receiveAddress;
             int bytesTransferred;
-            SocketError errorCode = SocketPal.ReceiveMessageFrom(this, _handle, buffer, ref socketFlags, socketAddress, out receiveAddress, out ipPacketInformation, out bytesTransferred);
+            int socketAddressLength;
+            SocketError errorCode = SocketPal.ReceiveMessageFrom(this, _handle, buffer, ref socketFlags, socketAddress.SocketBuffer, out socketAddressLength, out ipPacketInformation, out bytesTransferred);
+            socketAddress.Size = socketAddressLength;
 
             UpdateReceiveSocketErrorForDisposed(ref errorCode, bytesTransferred);
             // Throw an appropriate SocketException if the native call fails.
@@ -1683,17 +1667,15 @@ namespace System.Net.Sockets
                 if (errorCode == SocketError.Success && SocketType == SocketType.Dgram) SocketsTelemetry.Log.DatagramReceived();
             }
 
-            if (!socketAddressOriginal.Equals(receiveAddress))
+            if (!socketAddress.Equals(remoteEP))
             {
                 try
                 {
-                    remoteEP = endPointSnapshot.Create(receiveAddress);
+                    remoteEP = endPointSnapshot.Create(socketAddress);
                 }
                 catch
                 {
                 }
-                // Save a copy of the EndPoint so we can use it for Create().
-                _rightEndPoint ??= endPointSnapshot;
             }
 
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, errorCode);
@@ -1711,15 +1693,11 @@ namespace System.Net.Sockets
             ValidateBlockingMode();
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"SRC{LocalEndPoint} size:{size} remoteEP:{remoteEP}");
 
-            // We don't do a CAS demand here because the contents of remoteEP aren't used by
-            // WSARecvFrom; all that matters is that we generate a unique-to-this-call SocketAddress
-            // with the right address family.
-            EndPoint endPointSnapshot = remoteEP;
-            Internals.SocketAddress socketAddress = Serialize(ref endPointSnapshot);
-            Internals.SocketAddress socketAddressOriginal = IPEndPointExtensions.Serialize(endPointSnapshot);
-
             int bytesTransferred;
-            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, offset, size, socketFlags, socketAddress.Buffer, ref socketAddress.InternalSize, out bytesTransferred);
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            int socketAddressLength = socketAddressBuffer.Length;
+            int oldLen = socketAddressLength;
+            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, offset, size, socketFlags, socketAddressBuffer, ref socketAddressLength, out bytesTransferred);
 
             UpdateReceiveSocketErrorForDisposed(ref errorCode, bytesTransferred);
             // If the native call fails we'll throw a SocketException.
@@ -1741,26 +1719,8 @@ namespace System.Net.Sockets
                 if (SocketType == SocketType.Dgram) SocketsTelemetry.Log.DatagramReceived();
             }
 
-            if (!socketAddressOriginal.Equals(socketAddress))
-            {
-                try
-                {
-                    if (endPointSnapshot.AddressFamily == socketAddress.Family)
-                    {
-                        remoteEP = _remoteEndPoint != null ? _remoteEndPoint.Create(socketAddress) : socketAddress.GetIPEndPoint();
-                    }
-                    else if (endPointSnapshot.AddressFamily == AddressFamily.InterNetworkV6 && socketAddress.Family == AddressFamily.InterNetwork)
-                    {
-                        // We expect IPv6 on DualMode sockets but we can also get plain old IPv4
-                        remoteEP = new IPEndPoint(socketAddress.GetIPAddress().MapToIPv6(), socketAddress.GetPort());
-                    }
-                }
-                catch
-                {
-                }
-                // Save a copy of the EndPoint so we can use it for Create().
-                _rightEndPoint ??= endPointSnapshot;
-            }
+            _rightEndPoint ??= remoteEP;
+            remoteEP = CreateEndPointIfNeeded(remoteEP, socketAddressBuffer.Slice(0, socketAddressLength));
 
             if (socketException != null)
             {
@@ -1818,15 +1778,10 @@ namespace System.Net.Sockets
 
             ValidateBlockingMode();
 
-            // We don't do a CAS demand here because the contents of remoteEP aren't used by
-            // WSARecvFrom; all that matters is that we generate a unique-to-this-call SocketAddress
-            // with the right address family.
-            EndPoint endPointSnapshot = remoteEP;
-            Internals.SocketAddress socketAddress = Serialize(ref endPointSnapshot);
-            Internals.SocketAddress socketAddressOriginal = IPEndPointExtensions.Serialize(endPointSnapshot);
-
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            int socketAddressLength = socketAddressBuffer.Length;
             int bytesTransferred;
-            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, socketFlags, socketAddress.Buffer, ref socketAddress.InternalSize, out bytesTransferred);
+            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, socketFlags, socketAddressBuffer, ref socketAddressLength, out bytesTransferred);
 
             UpdateReceiveSocketErrorForDisposed(ref errorCode, bytesTransferred);
             // If the native call fails we'll throw a SocketException.
@@ -1848,27 +1803,8 @@ namespace System.Net.Sockets
                 if (SocketType == SocketType.Dgram) SocketsTelemetry.Log.DatagramReceived();
             }
 
-            if (!socketAddressOriginal.Equals(socketAddress))
-            {
-                try
-                {
-                    if (endPointSnapshot.AddressFamily == socketAddress.Family)
-                    {
-                        remoteEP = _remoteEndPoint != null ? _remoteEndPoint.Create(socketAddress) : socketAddress.GetIPEndPoint();
-                    }
-                    else if (endPointSnapshot.AddressFamily == AddressFamily.InterNetworkV6 && socketAddress.Family == AddressFamily.InterNetwork)
-                    {
-                        // We expect IPv6 on DalMode sockets but we can also get plain old IPv4
-                        remoteEP = new IPEndPoint(socketAddress.GetIPAddress().MapToIPv6(), socketAddress.GetPort());
-                    }
-                }
-                catch
-                {
-                }
-
-                // Save a copy of the EndPoint so we can use it for Create().
-                _rightEndPoint ??= endPointSnapshot;
-            }
+            _rightEndPoint ??= remoteEP;
+            remoteEP = CreateEndPointIfNeeded(remoteEP, socketAddressBuffer.Slice(0, socketAddressLength));
 
             if (socketException != null)
             {
@@ -1899,7 +1835,7 @@ namespace System.Net.Sockets
 
             int bytesTransferred;
             int addresssSize = 0;
-            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, socketFlags, remoteSocketAddress.Buffer, ref addresssSize, out bytesTransferred);
+            SocketError errorCode = SocketPal.ReceiveFrom(_handle, buffer, socketFlags, remoteSocketAddress.SocketBuffer.Span, ref addresssSize, out bytesTransferred);
 
             UpdateReceiveSocketErrorForDisposed(ref errorCode, bytesTransferred);
             // If the native call fails we'll throw a SocketException.
@@ -2785,12 +2721,11 @@ namespace System.Net.Sockets
                     throw new NotSupportedException(SR.net_invalidversion);
                 }
 
-                //e._socketAddress = Serialize(ref endPointSnapshot);
-                e._socketAddress = endPointSnapshot.Serialize();
+                e._socketAddress = SerializeSA(endPointSnapshot, IsDualMode);
                 _pendingConnectRightEndPoint = endPointSnapshot;
                 _nonBlockingConnectInProgress = false;
 
-                WildcardBindForConnectIfNecessary(endPointSnapshot.AddressFamily);
+                WildcardBindForConnectIfNecessary(e._socketAddress.Family);
 
                 SocketsTelemetry.Log.ConnectStart(e._socketAddress!);
 
@@ -2949,17 +2884,7 @@ namespace System.Net.Sockets
                 throw new ArgumentException(SR.Format(SR.net_InvalidEndPointAddressFamily, e.RemoteEndPoint.AddressFamily, _addressFamily), nameof(e));
             }
 
-            // We don't do a CAS demand here because the contents of remoteEP aren't used by
-            // WSARecvFrom; all that matters is that we generate a unique-to-this-call SocketAddress
-            // with the right address family.
-            EndPoint endPointSnapshot = e.RemoteEndPoint;
-            //e._socketAddress = Serialize(ref endPointSnapshot);
-            e._socketAddress = e.RemoteEndPoint.Serialize();
-
-            // DualMode sockets may have updated the endPointSnapshot, and it has to have the same AddressFamily as
-            // e.m_SocketAddres for Create to work later.
-            e.RemoteEndPoint = endPointSnapshot;
-
+            e._socketAddress = SerializeSA(e.RemoteEndPoint, IsDualMode);
             // Prepare for and make the native call.
             e.StartOperationCommon(this, SocketAsyncOperation.ReceiveFrom);
             SocketError socketError;
@@ -2995,18 +2920,7 @@ namespace System.Net.Sockets
             }
 
             SocketPal.CheckDualModePacketInfoSupport(this);
-
-            // We don't do a CAS demand here because the contents of remoteEP aren't used by
-            // WSARecvMsg; all that matters is that we generate a unique-to-this-call SocketAddress
-            // with the right address family.
-            EndPoint endPointSnapshot = e.RemoteEndPoint;
-            //e._socketAddress = Serialize(ref endPointSnapshot);
-            e._socketAddress = endPointSnapshot.Serialize();
-
-            // DualMode may have updated the endPointSnapshot, and it has to have the same AddressFamily as
-            // e.m_SocketAddres for Create to work later.
-            e.RemoteEndPoint = endPointSnapshot;
-
+            e._socketAddress = SerializeSA(e.RemoteEndPoint, IsDualMode);
             SetReceivingPacketInformation();
 
             // Prepare for and make the native call.
@@ -3098,8 +3012,7 @@ namespace System.Net.Sockets
 
             // Prepare SocketAddress
             EndPoint endPointSnapshot = e.RemoteEndPoint;
-            //e._socketAddress = Serialize(ref endPointSnapshot);
-            e._socketAddress = endPointSnapshot.Serialize();
+            e._socketAddress = SerializeSA(e.RemoteEndPoint, IsDualMode);
 
             // Prepare for and make the native call.
             e.StartOperationCommon(this, SocketAsyncOperation.SendTo);
@@ -3140,58 +3053,201 @@ namespace System.Net.Sockets
         // Internal and private methods
         //
 
-        internal static void GetIPProtocolInformation(AddressFamily addressFamily, Internals.SocketAddress socketAddress, out bool isIPv4, out bool isIPv6)
+        private static bool IsIPv4MappedToIPv6(ReadOnlySpan<byte> socketAddressBuffer)
         {
-            bool isIPv4MappedToIPv6 = socketAddress.Family == AddressFamily.InterNetworkV6 && socketAddress.GetIPAddress().IsIPv4MappedToIPv6;
-            isIPv4 = addressFamily == AddressFamily.InterNetwork || isIPv4MappedToIPv6; // DualMode
-            isIPv6 = addressFamily == AddressFamily.InterNetworkV6;
-        }
+            Span<byte> address = stackalloc byte[IPAddressParserStatics.IPv6AddressBytes];
+            uint scope;
+            SocketAddressPal.GetIPv6Address(socketAddressBuffer, address, out scope);
 
-        /*
-        internal static void GetIPProtocolInformation(AddressFamily addressFamily, SocketAddress socketAddress, out bool isIPv4, out bool isIPv6)
-        {
-            bool isIPv4MappedToIPv6 = socketAddress.Family == AddressFamily.InterNetworkV6 && socketAddress.GetIPAddress().IsIPv4MappedToIPv6;
-            isIPv4 = addressFamily == AddressFamily.InterNetwork || isIPv4MappedToIPv6; // DualMode
-            isIPv6 = addressFamily == AddressFamily.InterNetworkV6;
-        }
-        */
-
-        internal static int GetAddressSize(EndPoint endPoint)
-        {
-            AddressFamily fam = endPoint.AddressFamily;
+            // 0:0:0:0:0:FFFF:x.x.x.x
             return
-                fam == AddressFamily.InterNetwork ? SocketAddressPal.IPv4AddressSize :
-                fam == AddressFamily.InterNetworkV6 ? SocketAddressPal.IPv6AddressSize :
-                endPoint.Serialize().Size;
+                   MemoryMarshal.Read<ulong>(address) == 0 &&
+                   BinaryPrimitives.ReadUInt32LittleEndian(address.Slice(8)) == 0xFFFF0000;
         }
 
-        private Internals.SocketAddress Serialize(ref EndPoint remoteEP)
+        internal static void GetIPProtocolInformation(AddressFamily addressFamily, Memory<byte> socketAddress, out bool isIPv4, out bool isIPv6)
         {
-            if (remoteEP is IPEndPoint ip)
+            bool isIPv4MappedToIPv6 = addressFamily == AddressFamily.InterNetworkV6 && IsIPv4MappedToIPv6(socketAddress.Span);
+            isIPv4 = addressFamily == AddressFamily.InterNetwork || isIPv4MappedToIPv6; // DualMode
+            isIPv6 = addressFamily == AddressFamily.InterNetworkV6;
+        }
+
+        internal int GetAddressSize()
+        {
+            return
+                _addressFamily == AddressFamily.InterNetworkV6 || IsDualMode ? SocketAddressPal.IPv6AddressSize :
+                _addressFamily == AddressFamily.InterNetwork ? SocketAddressPal.IPv4AddressSize :
+                _addressFamily == AddressFamily.Unix ? SocketAddressPal.UdsAddressSize :
+                SocketAddressPal.MaxAddressSize;
+        }
+
+        internal static IPAddress GetIPAddress(ReadOnlySpan<byte> socketAddressBuffer)
+        {
+            if (SocketAddressPal.GetAddressFamily(socketAddressBuffer) == AddressFamily.InterNetworkV6)
             {
-                IPAddress addr = ip.Address;
-                if (addr.AddressFamily == AddressFamily.InterNetwork && IsDualMode)
+                Span<byte> address = stackalloc byte[IPAddressParserStatics.IPv6AddressBytes];
+                uint scope;
+                SocketAddressPal.GetIPv6Address(socketAddressBuffer, address, out scope);
+                return new IPAddress(address, (long)scope);
+            }
+
+            return new IPAddress((long)SocketAddressPal.GetIPv4Address(socketAddressBuffer) & 0x0FFFFFFFF);
+        }
+
+        private static void SerializeTo(IPAddress address, int port, bool isDualMode, Span<byte> destination, out int length)
+        {
+            SocketAddressPal.SetPort(destination, (ushort)port);
+            if (address.AddressFamily == AddressFamily.InterNetworkV6 || isDualMode)
+            {
+                length = SocketAddressPal.IPv6AddressSize;
+                SocketAddressPal.SetAddressFamily(destination, AddressFamily.InterNetworkV6);
+                Span<byte> addressBuffer = stackalloc byte[IPAddressParserStatics.IPv6AddressBytes];
+                if (address.AddressFamily == AddressFamily.InterNetworkV6)
                 {
-                    addr = addr.MapToIPv6(); // For DualMode, use an IPv6 address.
-                    remoteEP = new IPEndPoint(addr, ip.Port);
+                    address.TryWriteBytes(addressBuffer, out _);
+                    SocketAddressPal.SetIPv6Address(destination, addressBuffer, (uint)address.ScopeId);
                 }
+                else
+                {
+                    // ::FFFF.a.b.c.d
+                    addressBuffer.Clear();
+                    //buffer.AsSpan().Clear();
+                    addressBuffer[10] = (byte)0xff;
+                    addressBuffer[11] = (byte)0xff;
+#pragma warning disable CS0618
+                    BinaryPrimitives.WriteUInt32LittleEndian(addressBuffer.Slice(12), (uint)address.Address);
+#pragma warning restore CS0618
+
+                    SocketAddressPal.SetIPv6Address(destination, addressBuffer, 0);
+                }
+
+            }
+            else
+            {
+                length = SocketAddressPal.IPv4AddressSize;
+                SocketAddressPal.SetAddressFamily(destination, AddressFamily.InterNetwork);
+#pragma warning disable CS0618
+                SocketAddressPal.SetIPv4Address(destination, (uint)address.Address);
+#pragma warning restore CS0618
+            }
+        }
+
+        private static void SerializeTo(IPEndPoint endPoint, bool isDualMode, Span<byte> destination, out int length)
+        {
+            if (endPoint.AddressFamily == AddressFamily.InterNetworkV6)
+            {
+                endPoint.Serialize(destination);
+                length = SocketAddressPal.IPv6AddressSize;
+            }
+            else
+            {
+                if (isDualMode)
+                {
+                    SerializeTo(endPoint.Address, endPoint.Port, isDualMode, destination, out length);
+                }
+                else
+                {
+                    endPoint.Serialize(destination);
+                    length = SocketAddressPal.IPv4AddressSize;
+                }
+            }
+        }
+
+        internal static void SerializeTo(EndPoint remoteEP, bool isDualMode, Span<byte> destination, out int length)
+        {
+            if (remoteEP is IPEndPoint ipe)
+            {
+                SerializeTo(ipe, isDualMode, destination, out length);
+            }
+            else if (remoteEP is DnsEndPoint)
+            {
+                throw new ArgumentException(SR.Format(SR.net_sockets_invalid_dnsendpoint, nameof(remoteEP)), nameof(remoteEP));
+            }
+            else if (remoteEP is UnixDomainSocketEndPoint uds)
+            {
+                uds.TryWriteBytes(destination, out length);
+            }
+            else
+            {
+                // until https://github.com/dotnet/runtime/issues/78993 or equivalent is available.
+                SocketAddress sa = remoteEP.Serialize();
+                sa.SocketBuffer.Span.CopyTo(destination);
+                length = sa.Size;
+            }
+        }
+
+        private static SocketAddress SerializeSA(EndPoint remoteEP, bool isDualMode = false)
+        {
+            if (remoteEP is IPEndPoint ipe)
+            {
+                var sa = new SocketAddress(isDualMode ? AddressFamily.InterNetworkV6 : remoteEP.AddressFamily);
+                SerializeTo(ipe, isDualMode, sa.SocketBuffer.Span, out int length);
+                sa.Size = length;
+                return sa;
             }
             else if (remoteEP is DnsEndPoint)
             {
                 throw new ArgumentException(SR.Format(SR.net_sockets_invalid_dnsendpoint, nameof(remoteEP)), nameof(remoteEP));
             }
 
-            return IPEndPointExtensions.Serialize(remoteEP);
+            // TODO UDS
+
+            //SocketAddress sa = endpoint.Serialize();
+            return remoteEP.Serialize();
         }
 
-        //private void DoConnect(EndPoint endPointSnapshot, Internals.SocketAddress socketAddress)
-        private void DoConnect(EndPoint endPointSnapshot, SocketAddress socketAddress)
+
+        internal static EndPoint CreateEndPoint(EndPoint ep, ReadOnlySpan<byte> socketAddressBuffer)
         {
-            SocketsTelemetry.Log.ConnectStart(socketAddress);
+            if (ep is IPEndPoint)
+            {
+                return new IPEndPoint(GetIPAddress(socketAddressBuffer), SocketAddressPal.GetPort(socketAddressBuffer));
+            }
+            else if (ep is UnixDomainSocketEndPoint)
+            {
+                return new UnixDomainSocketEndPoint(socketAddressBuffer);
+            }
+
+            SocketAddress socketAddress = new SocketAddress(ep.AddressFamily, socketAddressBuffer.Length);
+            socketAddressBuffer.CopyTo(socketAddress.SocketBuffer.Span);
+
+            return ep.Create(socketAddress);
+        }
+
+        internal static EndPoint CreateEndPointIfNeeded(EndPoint ep, ReadOnlySpan<byte> socketAddressBuffer)
+        {
+            if (ep is IPEndPoint ipep)
+            {
+                if (ipep.Equals(socketAddressBuffer))
+                {
+                    return ep;
+                }
+            }
+
+            // For other types we simply create new copy every time.
+            return CreateEndPoint(ep, socketAddressBuffer);
+        }
+
+        private void DoConnect(EndPoint? endPointSnapshot, IPAddress? address = null, int port = 0)
+        {
+            Debug.Assert(endPointSnapshot != null || address != null);
+
+            Span<byte> socketAddressBuffer = stackalloc byte[SocketAddressPal.GetMaxAddresFamilySize(_addressFamily)];
+            int length;
+            if (endPointSnapshot != null)
+            {
+                SerializeTo(endPointSnapshot, IsDualMode, socketAddressBuffer, out length);
+            }
+            else
+            {
+                SerializeTo(address!, port, IsDualMode, socketAddressBuffer, out length);
+            }
+            socketAddressBuffer = socketAddressBuffer.Slice(0, length);
+
             SocketError errorCode;
             try
             {
-                errorCode = SocketPal.Connect(_handle, socketAddress.SocketBuffer);
+                errorCode = SocketPal.Connect(_handle, socketAddressBuffer);
             }
             catch (Exception ex)
             {
@@ -3204,7 +3260,7 @@ namespace System.Net.Sockets
             {
                 UpdateConnectSocketErrorForDisposed(ref errorCode);
                 // Update the internal state of this socket according to the error before throwing.
-                SocketException socketException = SocketExceptionFactory.CreateSocketException((int)errorCode, endPointSnapshot);
+                SocketException socketException = SocketExceptionFactory.CreateSocketException((int)errorCode, endPointSnapshot ?? new IPEndPoint(address!, port));
                 UpdateStatusAfterSocketError(socketException);
                 if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, socketException);
 
@@ -3215,10 +3271,21 @@ namespace System.Net.Sockets
 
             SocketsTelemetry.Log.AfterConnect(SocketError.Success);
 
-            if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"connection to:{endPointSnapshot}");
 
+            if (NetEventSource.Log.IsEnabled())
+            {
+                if (endPointSnapshot != null)
+                {
+                    if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"connection to:{endPointSnapshot}");
+                }
+                else
+                {
+                    if (NetEventSource.Log.IsEnabled()) NetEventSource.Info(this, $"connection to:{address!}:{port}");
+                }
+            }
             // Update state and performance counters.
-            _pendingConnectRightEndPoint = endPointSnapshot;
+            _rightEndPoint ??= endPointSnapshot ?? (address!.AddressFamily == AddressFamily.InterNetwork ? s_IPEndPoint4 : s_IPEndPoint6);
+            _pendingConnectRightEndPoint = null;
             _nonBlockingConnectInProgress = false;
             SetToConnected();
             if (NetEventSource.Log.IsEnabled()) NetEventSource.Connected(this, LocalEndPoint, RemoteEndPoint);
@@ -3409,13 +3476,13 @@ namespace System.Net.Sockets
                     SetSocketOption(SocketOptionLevel.IP, SocketOptionName.PacketInformation, true);
                 }
 
-                if ((boundAddress != null && IsDualMode && (boundAddress.IsIPv4MappedToIPv6 || boundAddress.Equals(IPAddress.IPv6Any))))
+                if ((boundAddress != null && IsDualMode && (boundAddress.AddressFamily == AddressFamily.InterNetwork || boundAddress.IsIPv4MappedToIPv6 || boundAddress.Equals(IPAddress.IPv6Any))))
                 {
                     SocketPal.SetReceivingDualModeIPv4PacketInformation(this);
                 }
 
                 if (_addressFamily == AddressFamily.InterNetworkV6
-                    && (boundAddress == null || !boundAddress.IsIPv4MappedToIPv6))
+                    && (boundAddress == null || (!boundAddress.IsIPv4MappedToIPv6 && boundAddress.AddressFamily != AddressFamily.InterNetwork)))
                 {
                     SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.PacketInformation, true);
                 }
@@ -3772,12 +3839,18 @@ namespace System.Net.Sockets
 
         // Called in Receive(Message)From variants to validate 'remoteEndPoint',
         // and check whether the socket is bound.
-        private void ValidateReceiveFromEndpointAndState(EndPoint remoteEndPoint, string remoteEndPointArgumentName)
+        private void ValidateReceiveFromEndpointAndState(EndPoint remoteEP, string remoteEndPointArgumentName)
         {
-            ArgumentNullException.ThrowIfNull(remoteEndPoint, remoteEndPointArgumentName);
-            if (!CanTryAddressFamily(remoteEndPoint.AddressFamily))
+            ArgumentNullException.ThrowIfNull(remoteEP, remoteEndPointArgumentName);
+
+            if (remoteEP  is DnsEndPoint)
             {
-                throw new ArgumentException(SR.Format(SR.net_InvalidEndPointAddressFamily, remoteEndPoint.AddressFamily, _addressFamily), remoteEndPointArgumentName);
+                throw new ArgumentException(SR.Format(SR.net_sockets_invalid_dnsendpoint, nameof(remoteEP)), nameof(remoteEP));
+            }
+
+            if (!CanTryAddressFamily(remoteEP.AddressFamily))
+            {
+                throw new ArgumentException(SR.Format(SR.net_InvalidEndPointAddressFamily, remoteEP.AddressFamily, _addressFamily), remoteEndPointArgumentName);
             }
             if (_rightEndPoint == null)
             {

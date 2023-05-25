@@ -10,8 +10,8 @@ internal static partial class Interop
     {
         [LibraryImport(Interop.Libraries.Ws2_32, SetLastError = true)]
         internal static unsafe partial SocketError getsockname(
-            SafeSocketHandle socketHandle,
-            byte* socketAddress,
-            int* socketAddressSize);
+        SafeSocketHandle socketHandle,
+        byte* socketAddress,
+        ref int socketAddressSize);
     }
 }

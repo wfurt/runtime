@@ -354,16 +354,16 @@ namespace System.Net
         public SocketAddress(System.Net.Sockets.AddressFamily family, int size) { }
         public System.Net.Sockets.AddressFamily Family { get { throw null; } }
         public byte this[int offset] { get { throw null; } set { } }
-        public int Size { get { throw null; } }
+        public int Size { get { throw null; } set { } }
         public override bool Equals(object? comparand) { throw null; }
         public override int GetHashCode() { throw null; }
         public override string ToString() { throw null; }
 
-        public System.Memory<byte> SocketBuffer { get { throw null; } }
+        public System.Memory<byte> SocketBuffer { get { throw null; } set { } }
         public bool Equals(System.Net.EndPoint comparand) { throw null; }
-        public bool TryGetAddress(out System.Int128 address) { throw null; }
+        public bool TryGetAddress(out System.Int128 address, out long scopeid) { throw null; }
         public bool TryGetPort(out int port) { throw null; }
-        public byte[] Buffer;
+        public bool TryWriteAddressBytes(Span<byte> destination, out int bytesWritten) { throw null; }
     }
     public abstract partial class TransportContext
     {

@@ -13,6 +13,8 @@ namespace System.Net
     {
         public static readonly int IPv6AddressSize = GetIPv6AddressSize();
         public static readonly int IPv4AddressSize = GetIPv4AddressSize();
+        public const int UdsAddressSize = 128;
+        public const int MaxAddressSize = 128;
 
         private static unsafe int GetIPv6AddressSize()
         {
@@ -29,6 +31,14 @@ namespace System.Net
             Debug.Assert(err == Interop.Error.SUCCESS, $"Unexpected err: {err}");
             return ipv4AddressSize;
         }
+
+        public static int GetMaxAddresFamilySize(AddressFamily family) => family switch
+        {
+            AddressFamily.InterNetwork => IPv4AddressSize,
+            AddressFamily.InterNetworkV6 => IPv6AddressSize,
+            AddressFamily.Unix => UdsAddressSize,
+            _ => MaxAddressSize
+        };
 
         private static void ThrowOnFailure(Interop.Error err)
         {
@@ -64,7 +74,7 @@ namespace System.Net
             return family;
         }
 
-        public static unsafe void SetAddressFamily(byte[] buffer, AddressFamily family)
+        public static unsafe void SetAddressFamily(Span<byte> buffer, AddressFamily family)
         {
             Interop.Error err;
 
@@ -92,7 +102,7 @@ namespace System.Net
             return port;
         }
 
-        public static unsafe void SetPort(byte[] buffer, ushort port)
+        public static unsafe void SetPort(Span<byte> buffer, ushort port)
         {
             Interop.Error err;
             fixed (byte* rawAddress = buffer)
@@ -130,7 +140,7 @@ namespace System.Net
             scope = localScope;
         }
 
-        public static unsafe void SetIPv4Address(byte[] buffer, uint address)
+        public static unsafe void SetIPv4Address(Span<byte> buffer, uint address)
         {
             Interop.Error err;
             fixed (byte* rawAddress = buffer)
@@ -141,13 +151,13 @@ namespace System.Net
             ThrowOnFailure(err);
         }
 
-        public static unsafe void SetIPv4Address(byte[] buffer, byte* address)
+        public static unsafe void SetIPv4Address(Span<byte> buffer, byte* address)
         {
             uint addr = (uint)System.Runtime.InteropServices.Marshal.ReadInt32((IntPtr)address);
             SetIPv4Address(buffer, addr);
         }
 
-        public static unsafe void SetIPv6Address(byte[] buffer, Span<byte> address, uint scope)
+        public static unsafe void SetIPv6Address(Span<byte> buffer, Span<byte> address, uint scope)
         {
             fixed (byte* rawInput = &MemoryMarshal.GetReference(address))
             {
@@ -155,7 +165,7 @@ namespace System.Net
             }
         }
 
-        public static unsafe void SetIPv6Address(byte[] buffer, byte* address, int addressLength, uint scope)
+        public static unsafe void SetIPv6Address(Span<byte> buffer, byte* address, int addressLength, uint scope)
         {
             Interop.Error err;
             fixed (byte* rawAddress = buffer)

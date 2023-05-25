@@ -77,13 +77,13 @@ namespace System.Net.Sockets
         }
 
         [NonEvent]
-        public void ConnectStart(Internals.SocketAddress address)
+        public void ConnectStart(IPAddress address, int port)
         {
             Interlocked.Increment(ref _currentOutgoingConnectAttempts);
 
             if (IsEnabled(EventLevel.Informational, EventKeywords.All))
             {
-                ConnectStart(address.ToString());
+                ConnectStart($"{address}:{port}");
             }
         }
 
@@ -95,6 +95,17 @@ namespace System.Net.Sockets
             if (IsEnabled(EventLevel.Informational, EventKeywords.All))
             {
                 ConnectStart(address.ToString());
+            }
+        }
+
+        [NonEvent]
+        public void ConnectStart(EndPoint ep)
+        {
+            Interlocked.Increment(ref _currentOutgoingConnectAttempts);
+
+            if (IsEnabled(EventLevel.Informational, EventKeywords.All))
+            {
+                ConnectStart(ep.ToString());
             }
         }
 
@@ -118,7 +129,7 @@ namespace System.Net.Sockets
         }
 
         [NonEvent]
-        public void AcceptStart(Internals.SocketAddress address)
+        public void AcceptStart(SocketAddress address)
         {
             if (IsEnabled(EventLevel.Informational, EventKeywords.All))
             {

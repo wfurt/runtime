@@ -10,5 +10,12 @@ namespace System.Net.Sockets
             // Windows directly maps socketError to native error code.
             return new SocketException(socketError, CreateMessage(socketError, endPoint));
         }
+
+        public static SocketException CreateSocketException(int socketError, Memory<byte> _)
+        {
+            // Windows directly maps socketError to native error code.
+            //return new SocketException(socketError, CreateMessage(socketError));
+            return new SocketException(socketError);
+        }
     }
 }

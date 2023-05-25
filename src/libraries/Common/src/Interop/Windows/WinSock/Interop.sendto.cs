@@ -15,7 +15,7 @@ internal static partial class Interop
             byte* pinnedBuffer,
             int len,
             SocketFlags socketFlags,
-            Span<byte> socketAddress,
+            ReadOnlySpan<byte> socketAddress,
             int socketAddressSize);
     }
 }

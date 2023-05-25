@@ -335,12 +335,16 @@ namespace System.Net.Sockets
             }
         }
 
-        private SocketError FinishOperationAccept(Internals.SocketAddress remoteSocketAddress)
+        private unsafe SocketError FinishOperationAccept(Span<byte> remoteSocketAddressBuffer, out int remoteAddrLength)
         {
-            System.Buffer.BlockCopy(_acceptBuffer!, 0, remoteSocketAddress.Buffer, 0, _acceptAddressBufferCount);
+            //System.Buffer.BlockCopy(_acceptBuffer!, 0, remoteSocketAddress.SocketBuffer.Span, 0, _acceptAddressBufferCount);
+            //            new Span<byte>(_acceptBuffer!, 0, _acceptAddressBufferCount).CopyTo(remoteSocketAddress.SocketBuffer.Span);
+            _acceptBuffer.AsSpan().Slice(0, _acceptAddressBufferCount).CopyTo(remoteSocketAddressBuffer);
+            remoteAddrLength = _acceptAddressBufferCount;
             Socket acceptedSocket = _currentSocket!.CreateAcceptSocket(
                 SocketPal.CreateSocket(_acceptedFileDescriptor),
-                _currentSocket._rightEndPoint!.Create(remoteSocketAddress));
+                Socket.CreateEndPoint(_currentSocket!._rightEndPoint!, remoteSocketAddressBuffer));
+
             if (_acceptSocket is null)
             {
                 // Store the accepted socket

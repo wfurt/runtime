@@ -74,30 +74,46 @@ namespace System.Net.Sockets
                 throw new ArgumentOutOfRangeException(nameof(socketAddress));
             }
 
-            if (socketAddress.Size > s_nativePathOffset)
+            SetPath(socketAddress.SocketBuffer.Span, out _encodedPath, out _path);
+        }
+
+
+        internal UnixDomainSocketEndPoint(ReadOnlySpan<byte> socketAddress)
+        {
+            if (socketAddress.Length > s_nativeAddressSize)
             {
-                _encodedPath = new byte[socketAddress.Size - s_nativePathOffset];
-                for (int i = 0; i < _encodedPath.Length; i++)
+                throw new ArgumentOutOfRangeException(nameof(socketAddress));
+            }
+
+            SetPath(socketAddress, out _encodedPath, out _path);
+        }
+
+        private static void SetPath(ReadOnlySpan<byte> socketAddress, out byte[] encodedPath, out string path)
+        {
+            if (socketAddress.Length > s_nativePathOffset)
+            {
+                encodedPath = new byte[socketAddress.Length - s_nativePathOffset];
+                for (int i = 0; i < encodedPath.Length; i++)
                 {
-                    _encodedPath[i] = socketAddress[s_nativePathOffset + i];
+                    encodedPath[i] = socketAddress[s_nativePathOffset + i];
                 }
 
                 // Strip trailing null of pathname socket addresses.
-                int length = _encodedPath.Length;
-                if (!IsAbstract(_encodedPath))
+                int length = encodedPath.Length;
+                if (!IsAbstract(encodedPath))
                 {
                     // Since this isn't an abstract path, we're sure our first byte isn't 0.
-                    while (_encodedPath[length - 1] == 0)
+                    while (encodedPath[length - 1] == 0)
                     {
                         length--;
                     }
                 }
-                _path = Encoding.UTF8.GetString(_encodedPath, 0, length);
+                path = Encoding.UTF8.GetString(encodedPath, 0, length);
             }
             else
             {
-                _encodedPath = Array.Empty<byte>();
-                _path = string.Empty;
+                encodedPath = Array.Empty<byte>();
+                path = string.Empty;
             }
         }
 
@@ -113,6 +129,34 @@ namespace System.Net.Sockets
             }
 
             return result;
+        }
+
+
+        // https://github.com/dotnet/runtime/issues/78993
+        internal bool TryGetSocketAddressSize(out int size)
+        {
+            size = s_nativePathOffset + _encodedPath.Length;
+            return true;
+        }
+
+        internal void Serialize(Span<byte> destination)
+        {
+            SocketAddressPal.SetAddressFamily(destination, AddressFamily.Unix);
+            _encodedPath.AsSpan().CopyTo(destination.Slice(s_nativePathOffset));
+        }
+
+        internal bool TryWriteBytes(Span<byte> destination, out int bytesWritten)
+        {
+            TryGetSocketAddressSize(out int size);
+            if (size > destination.Length)
+            {
+                bytesWritten = 0;
+                return false;
+            }
+
+            Serialize(destination);
+            bytesWritten = size;
+            return true;
         }
 
         /// <summary>Creates an <see cref="EndPoint"/> instance from a <see cref="SocketAddress"/> instance.</summary>
