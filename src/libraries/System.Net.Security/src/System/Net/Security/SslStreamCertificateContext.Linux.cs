@@ -206,6 +206,9 @@ namespace System.Net.Security
             // in the future.
             if (subject == 0 || issuer == 0)
             {
+                if (NetEventSource.Log.IsEnabled())
+                    NetEventSource.Error(this, $"***OCSP disabling download '{subject}' '{issuer}'");
+
                 _staplingForbidden = true;
                 return null;
             }
@@ -239,12 +242,16 @@ namespace System.Net.Security
                             _ocspUrls[i] = tmp;
                         }
 
-                        DateTimeOffset nextCheckA = DateTimeOffset.UtcNow.AddDays(1);
+                        DateTimeOffset nextCheckA = DateTimeOffset.UtcNow.AddHours(8);
                         DateTimeOffset nextCheckB = expiration.AddMinutes(-5);
 
                         _ocspResponse = ret;
                         _ocspExpiration = expiration;
                         _nextDownload = nextCheckA < nextCheckB ? nextCheckA : nextCheckB;
+
+                        if (NetEventSource.Log.IsEnabled())
+                            NetEventSource.Info(this, $"***OCSP scheduling next download at {_nextDownload}");
+
                         _pendingDownload = null;
                         break;
                     }
