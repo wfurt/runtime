@@ -178,13 +178,13 @@ internal static partial class Interop
             return protocols;
         }
 
-        internal static SafeSslContextHandle GetOrCreateSslContextHandle(SslAuthenticationOptions sslAuthenticationOptions, bool allowCached)
+        internal static SafeSslContextHandle GetOrCreateSslContextHandle(SslAuthenticationOptions sslAuthenticationOptions, bool allowCached, bool enableResume)
         {
             SslProtocols protocols = CalculateEffectiveProtocols(sslAuthenticationOptions);
 
             if (!allowCached)
             {
-                return AllocateSslContext(sslAuthenticationOptions, protocols, allowCached);
+                return AllocateSslContext(sslAuthenticationOptions, protocols, enableResume);
             }
 
             bool hasAlpn = sslAuthenticationOptions.ApplicationProtocols != null && sslAuthenticationOptions.ApplicationProtocols.Count != 0;
@@ -197,9 +197,9 @@ internal static partial class Interop
                 sslAuthenticationOptions.CertificateContext);
             return s_sslContexts.GetOrCreate(key, static (args) =>
             {
-                var (sslAuthOptions, protocols, allowCached) = args;
-                return AllocateSslContext(sslAuthOptions, protocols, allowCached);
-            }, (sslAuthenticationOptions, protocols, allowCached));
+                var (sslAuthOptions, protocols, enableResume) = args;
+                return AllocateSslContext(sslAuthOptions, protocols, enableResume);
+            }, (sslAuthenticationOptions, protocols, enableResume));
         }
 
         // This essentially wraps SSL_CTX* aka SSL_CTX_new + setting
@@ -348,7 +348,16 @@ internal static partial class Interop
         internal static SafeSslHandle AllocateSslHandle(SslAuthenticationOptions sslAuthenticationOptions)
         {
             SafeSslHandle? sslHandle = null;
-            bool cacheSslContext = sslAuthenticationOptions.AllowTlsResume && !SslStream.DisableTlsResume && sslAuthenticationOptions.EncryptionPolicy == EncryptionPolicy.RequireEncryption && sslAuthenticationOptions.CipherSuitesPolicy == null;
+            // When a TlsContext owns a long-lived SSL_CTX (set via PreallocatedSslContext)
+            // we bypass the global SslContextCacheKey lookup and the TLS-resume cache hung
+            // off it: the TlsContext is the resume scope. The handle is borrowed here, not
+            // owned, so the conditional Dispose() in the finally below skips it.
+            SafeSslContextHandle? preallocatedSslCtx = sslAuthenticationOptions.PreallocatedSslContext;
+            bool cacheSslContext = preallocatedSslCtx is null
+                && sslAuthenticationOptions.AllowTlsResume
+                && !SslStream.DisableTlsResume
+                && sslAuthenticationOptions.EncryptionPolicy == EncryptionPolicy.RequireEncryption
+                && sslAuthenticationOptions.CipherSuitesPolicy == null;
 
             if (cacheSslContext)
             {
@@ -385,7 +394,10 @@ internal static partial class Interop
             // For uncached SafeSslContextHandles, the handle will be disposed and closed.
             // Cached SafeSslContextHandles are returned with increaset rent count so that
             // Dispose() here will not close the handle.
-            using SafeSslContextHandle sslCtxHandle = GetOrCreateSslContextHandle(sslAuthenticationOptions, cacheSslContext);
+            // When a preallocated SSL_CTX is provided (TlsContext-owned), we borrow it
+            // for the duration of this method without disposing — the TlsContext keeps
+            // it alive across every TlsSession it produces.
+            SafeSslContextHandle sslCtxHandle = preallocatedSslCtx ?? GetOrCreateSslContextHandle(sslAuthenticationOptions, cacheSslContext, cacheSslContext);
 
             GCHandle alpnHandle = default;
             try
@@ -519,6 +531,13 @@ internal static partial class Interop
                 }
 
                 throw;
+            }
+            finally
+            {
+                if (preallocatedSslCtx is null)
+                {
+                    sslCtxHandle.Dispose();
+                }
             }
 
             return sslHandle;
