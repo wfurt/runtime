@@ -402,7 +402,7 @@ internal static partial class Interop
             GCHandle alpnHandle = default;
             try
             {
-                sslHandle = SafeSslHandle.Create(sslCtxHandle, sslAuthenticationOptions.IsServer);
+                sslHandle = SafeSslHandle.Create(sslCtxHandle, sslAuthenticationOptions.IsServer, sslAuthenticationOptions.SocketHandle);
                 Debug.Assert(sslHandle != null, "Expected non-null return value from SafeSslHandle.Create");
                 if (sslHandle.IsInvalid)
                 {

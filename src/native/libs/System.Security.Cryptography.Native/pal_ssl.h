@@ -311,6 +311,13 @@ Shims the SSL_set_bio method.
 PALEXPORT void CryptoNative_SslSetBio(SSL* ssl, BIO* rbio, BIO* wbio);
 
 /*
+Shims the SSL_set_fd method. Binds an existing socket file descriptor to the
+SSL object; OpenSSL allocates a socket BIO internally for both read and write.
+Returns 1 on success, 0 on failure.
+*/
+PALEXPORT int32_t CryptoNative_SslSetFd(SSL* ssl, intptr_t fd);
+
+/*
 Shims the SSL_do_handshake method.
 
 Returns:
