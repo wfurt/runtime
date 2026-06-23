@@ -773,6 +773,16 @@ internal static partial class Interop
                     return SecurityStatusPalErrorCode.CertValidationNeeded;
                 }
 
+                if (errorCode == Ssl.SslErrorCode.SSL_ERROR_WANT_CLIENT_HELLO_CB)
+                {
+                    // The ClientHello callback paused the handshake so managed callers
+                    // can inspect the raw ClientHello bytes (already captured into the
+                    // SSL object's ex_data). The handshake resumes on the next
+                    // DoSslHandshake call. No output was produced yet (ServerHello is
+                    // generated on resume), so there is nothing to drain here.
+                    return SecurityStatusPalErrorCode.ClientHelloNeeded;
+                }
+
                 if (errorCode == Ssl.SslErrorCode.SSL_ERROR_SSL && context.CertificateValidationException is Exception ex)
                 {
                     // Clear the OpenSSL error queue since we are using our own

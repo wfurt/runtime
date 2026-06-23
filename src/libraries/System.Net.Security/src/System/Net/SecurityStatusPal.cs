@@ -35,6 +35,7 @@ namespace System.Net
         TryAgain,
         HandshakeStarted,
         CertValidationNeeded,
+        ClientHelloNeeded,
 
         // Errors
         OutOfMemory,

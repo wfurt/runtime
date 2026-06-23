@@ -362,6 +362,157 @@ namespace System.Net.Security.Tests
                 $"SNI host '{serverName}' not found in captured ClientHello bytes.");
         }
 
+        // Same low-level raw ClientHello inspection as the fd-mode test above, but exercised through
+        // the BIO-mode path: the caller owns the transport and feeds ciphertext to
+        // ProcessHandshake(input, output, ...). The same OpenSSL ClientHello callback fires inside
+        // SSL_do_handshake regardless of transport, so ProcessHandshake surfaces
+        // TlsOperationStatus.NeedsClientHello exactly once with the identical raw bytes, then resumes
+        // (emitting the ServerHello) on the next call. Linux/OpenSSL only.
+        [Fact]
+        public async Task ClientHelloInspection_CapturesRawBytes_ViaTlsSession_BioMode()
+        {
+            if (!OperatingSystem.IsLinux() && !OperatingSystem.IsFreeBSD())
+            {
+                return; // Raw ClientHello capture is implemented only in the OpenSSL PAL.
+            }
+
+            using X509Certificate2 serverCert = TestCertificates.GetServerCertificate();
+            string serverName = serverCert.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
+
+            (Stream clientStream, Stream serverStream) = TestHelper.GetConnectedStreams();
+            using (clientStream)
+            using (serverStream)
+            using (SslStream clientSsl = new SslStream(clientStream, leaveInnerStreamOpen: false, TestHelper.AllowAnyServerCertificate))
+            {
+                // ServerCertificate is supplied up-front so the session already has server options and
+                // goes straight to the handshake (no NeedsServerOptions detour), arming the SSL_CTX
+                // ClientHello callback before the first ProcessHandshake.
+                using TlsContext serverCtx = TlsContext.Create(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = serverCert,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                });
+                serverCtx.EnableClientHelloInspection = true;
+
+                // BIO mode: no socket handle is passed, so the caller drives ciphertext through
+                // ProcessHandshake rather than letting OpenSSL own the socket.
+                using TlsSession server = TlsSession.Create(serverCtx);
+
+                Task clientHandshake = clientSsl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                {
+                    TargetHost = serverName, // carried as the SNI host name in the ClientHello
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                    RemoteCertificateValidationCallback = TestHelper.AllowAnyServerCertificate,
+                });
+
+                int clientHelloSuspends = 0;
+                byte[]? capturedHello = null;
+
+                Task serverHandshake = Task.Run(async () =>
+                {
+                    byte[] netIn = ArrayPool<byte>.Shared.Rent(CipherBufSize);
+                    byte[] netOut = ArrayPool<byte>.Shared.Rent(CipherBufSize);
+                    int inUsed = 0;
+                    try
+                    {
+                        while (!server.IsHandshakeComplete)
+                        {
+                            TlsOperationStatus status = server.ProcessHandshake(
+                                netIn.AsSpan(0, inUsed),
+                                netOut,
+                                out int consumed,
+                                out int produced);
+
+                            if (consumed > 0)
+                            {
+                                if (consumed < inUsed)
+                                {
+                                    Buffer.BlockCopy(netIn, consumed, netIn, 0, inUsed - consumed);
+                                }
+                                inUsed -= consumed;
+                            }
+
+                            if (produced > 0)
+                            {
+                                await serverStream.WriteAsync(netOut.AsMemory(0, produced));
+                                await serverStream.FlushAsync();
+                            }
+
+                            switch (status)
+                            {
+                                case TlsOperationStatus.NeedsClientHello:
+                                    clientHelloSuspends++;
+                                    // The ClientHello was already consumed into the BIO and captured into
+                                    // ex_data; copy it out, then resume on the next ProcessHandshake (which
+                                    // re-enters the suspended SSL_do_handshake and emits the ServerHello).
+                                    ReadOnlySpan<byte> hello = server.GetClientHelloBytes();
+                                    capturedHello = hello.ToArray();
+                                    continue;
+
+                                case TlsOperationStatus.NeedsCertificateValidation:
+                                    server.AcceptWithDefaultValidation();
+                                    continue;
+
+                                case TlsOperationStatus.Complete:
+                                    continue;
+
+                                case TlsOperationStatus.WantWrite:
+                                    while (server.HasPendingOutput)
+                                    {
+                                        server.DrainPendingOutput(netOut, out int extra);
+                                        if (extra > 0)
+                                        {
+                                            await serverStream.WriteAsync(netOut.AsMemory(0, extra));
+                                            await serverStream.FlushAsync();
+                                        }
+                                    }
+                                    continue;
+
+                                case TlsOperationStatus.WantRead:
+                                    int r = await serverStream.ReadAsync(netIn.AsMemory(inUsed));
+                                    if (r == 0)
+                                    {
+                                        throw new IOException("Unexpected EOF during handshake.");
+                                    }
+                                    inUsed += r;
+                                    continue;
+
+                                case TlsOperationStatus.Closed:
+                                    throw new IOException("Peer closed connection during handshake.");
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(netIn);
+                        ArrayPool<byte>.Shared.Return(netOut);
+                    }
+                });
+
+                await Task.WhenAll(clientHandshake, serverHandshake).WaitAsync(TimeSpan.FromSeconds(30));
+
+                Assert.True(server.IsHandshakeComplete);
+                Assert.True(clientSsl.IsAuthenticated);
+
+                // The handshake paused exactly once at ClientHello and produced bytes.
+                Assert.Equal(1, clientHelloSuspends);
+                Assert.NotNull(capturedHello);
+                Assert.NotEmpty(capturedHello!);
+
+                // First byte is the TLS HandshakeType for ClientHello (1), with no outer 5-byte record
+                // header, and the 3-byte length prefix matches the remaining body length.
+                Assert.Equal(1, capturedHello![0]);
+                int body = (capturedHello[1] << 16) | (capturedHello[2] << 8) | capturedHello[3];
+                Assert.Equal(capturedHello.Length, 4 + body);
+
+                // The SNI host the client advertised appears verbatim in the raw bytes, proving these
+                // are the real ClientHello the peer sent (the routing info Kestrel would parse).
+                byte[] sniBytes = Encoding.ASCII.GetBytes(serverName);
+                Assert.True(capturedHello.AsSpan().IndexOf(sniBytes) >= 0,
+                    $"SNI host '{serverName}' not found in captured ClientHello bytes.");
+            }
+        }
+
         // ── Server-side handshake driver (TlsSession only, no SslStream on this side) ──────
 
         // Drives the server TlsSession over <paramref name="transport"/> until the handshake

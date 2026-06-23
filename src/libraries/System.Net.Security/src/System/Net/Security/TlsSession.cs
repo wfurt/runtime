@@ -67,6 +67,11 @@ namespace System.Net.Security
         // Set by SetClientCertificateContext after a WantCredentials suspension; consumed by
         // the next ProcessHandshake to allow an empty-input re-entry past the frame guard.
         private bool _resumeAfterCredentials;
+        // Set when ProcessHandshake returns NeedsClientHello (BIO mode); consumed by the next
+        // ProcessHandshake to allow an empty-input re-entry past the frame guard so the
+        // suspended SSL_do_handshake resumes and emits the ServerHello. The ClientHello bytes
+        // were already consumed into the BIO on the suspending call, so no re-feed is needed.
+        private bool _resumeAfterClientHello;
         // Intermediate certs the peer sent (chain elements minus the leaf). The platform-built
         // X509Chain itself is never surfaced to TlsSession callers; AcceptWithDefaultValidation
         // rebuilds a fresh chain from this collection at validation time.
@@ -601,7 +606,9 @@ namespace System.Net.Security
             bool isInitialClientCall = !_context.IsServer && _securityContext is null;
             bool isCredentialResume = _resumeAfterCredentials;
             _resumeAfterCredentials = false;
-            if (!isInitialClientCall && !isCredentialResume)
+            bool isClientHelloResume = _resumeAfterClientHello;
+            _resumeAfterClientHello = false;
+            if (!isInitialClientCall && !isCredentialResume && !isClientHelloResume)
             {
                 if (input.Length < TlsFrameHelper.HeaderSize)
                 {
@@ -748,7 +755,8 @@ namespace System.Net.Security
 
                 if (token.Failed &&
                     token.Status.ErrorCode != SecurityStatusPalErrorCode.CredentialsNeeded &&
-                    token.Status.ErrorCode != SecurityStatusPalErrorCode.CertValidationNeeded)
+                    token.Status.ErrorCode != SecurityStatusPalErrorCode.CertValidationNeeded &&
+                    token.Status.ErrorCode != SecurityStatusPalErrorCode.ClientHelloNeeded)
                 {
                     throw new AuthenticationException(SR.net_auth_SSPI, token.GetException());
                 }
@@ -756,6 +764,7 @@ namespace System.Net.Security
                 bool done = token.Status.ErrorCode == SecurityStatusPalErrorCode.OK;
                 bool needsCredentials = token.Status.ErrorCode == SecurityStatusPalErrorCode.CredentialsNeeded;
                 bool needsCertValidation = token.Status.ErrorCode == SecurityStatusPalErrorCode.CertValidationNeeded;
+                bool needsClientHello = token.Status.ErrorCode == SecurityStatusPalErrorCode.ClientHelloNeeded;
 
                 if (done)
                 {
@@ -794,6 +803,16 @@ namespace System.Net.Security
                 if (needsCredentials)
                 {
                     return TlsOperationStatus.WantCredentials;
+                }
+
+                if (needsClientHello)
+                {
+                    // The ClientHello bytes were already consumed into the BIO and captured
+                    // into the SSL object's ex_data. Arm an empty-input resume so the next
+                    // ProcessHandshake re-enters the suspended SSL_do_handshake (which then
+                    // emits the ServerHello) instead of being turned away by the frame guard.
+                    _resumeAfterClientHello = true;
+                    return TlsOperationStatus.NeedsClientHello;
                 }
 
                 // SChannel consumes one TLS record per AcceptSecurityContext/
