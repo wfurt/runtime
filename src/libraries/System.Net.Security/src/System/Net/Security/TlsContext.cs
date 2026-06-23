@@ -79,6 +79,24 @@ namespace System.Net.Security
         public bool IsServer => _options.IsServer;
 
         /// <summary>
+        /// Server-side only. When set to <see langword="true"/> before the first session
+        /// handshake, the underlying OpenSSL handshake pauses once at ClientHello and the
+        /// raw ClientHello bytes are captured. Sessions then report
+        /// <see cref="TlsOperationStatus.NeedsClientHello"/>, and the bytes can be read via
+        /// <see cref="TlsSession.GetClientHelloBytes"/> before the handshake is resumed.
+        /// </summary>
+        /// <remarks>
+        /// This surfaces the raw handshake message (HandshakeType + length prefix + body),
+        /// without the outer 5-byte TLS record header. It is intended for low-level callers that parse the ClientHello themselves.
+        /// No-op on platforms without the OpenSSL ClientHello callback.
+        /// </remarks>
+        public bool EnableClientHelloInspection
+        {
+            get => _options.EnableClientHelloCallback;
+            set => _options.EnableClientHelloCallback = value;
+        }
+
+        /// <summary>
         /// Creates a server-side TLS context.
         /// </summary>
         /// <param name="options">

@@ -83,6 +83,9 @@ namespace System.Net.Security
         public IReadOnlyList<string>? GetAcceptableIssuers() =>
             throw new PlatformNotSupportedException(SR.SystemNetSecurity_PlatformNotSupported);
 
+        public ReadOnlySpan<byte> GetClientHelloBytes() =>
+            throw new PlatformNotSupportedException(SR.SystemNetSecurity_PlatformNotSupported);
+
         public X509Certificate2? LocalCertificate =>
             throw new PlatformNotSupportedException(SR.SystemNetSecurity_PlatformNotSupported);
 

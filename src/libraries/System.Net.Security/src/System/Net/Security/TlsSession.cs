@@ -1907,6 +1907,32 @@ namespace System.Net.Security
         partial void TryFastHandshake(ref TlsOperationStatus? result);
         partial void TryFastRead(Span<byte> buffer, ref int bytesRead, ref TlsOperationStatus? result);
         partial void TryFastWrite(ReadOnlySpan<byte> buffer, ref int bytesWritten, ref TlsOperationStatus? result);
+        partial void TryGetClientHelloBytes(ref ReadOnlySpan<byte> result);
+
+        /// <summary>
+        /// Returns the raw ClientHello handshake message captured by OpenSSL, or an
+        /// empty span if none was captured (for example, when
+        /// <see cref="TlsContext.EnableClientHelloInspection"/> was not set, the handshake
+        /// has not yet reached ClientHello, or the platform does not support capture).
+        /// </summary>
+        /// <remarks>
+        /// Available after a handshake call returns
+        /// <see cref="TlsOperationStatus.NeedsClientHello"/>. The bytes are the TLS handshake
+        /// message (HandshakeType + 3-byte length + body), without the outer 5-byte TLS record
+        /// header. Intended for low-level callers that parse the ClientHello themselves
+        /// (e.g. SNI/ALPN routing).
+        /// <para>
+        /// The returned span is a zero-copy view over native memory owned by this session and
+        /// is only valid until the session is disposed. Copy it (for example with
+        /// <see cref="ReadOnlySpan{T}.ToArray"/>) if you need to retain the bytes.
+        /// </para>
+        /// </remarks>
+        public ReadOnlySpan<byte> GetClientHelloBytes()
+        {
+            ReadOnlySpan<byte> result = default;
+            TryGetClientHelloBytes(ref result);
+            return result;
+        }
 
         public void Dispose()
         {

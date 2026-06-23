@@ -103,12 +103,34 @@ namespace System.Net.Security
             return handle;
         }
 
+        partial void TryGetClientHelloBytes(ref ReadOnlySpan<byte> result)
+        {
+            // _securityContext is the SafeSslHandle in both fd and BIO modes on Unix
+            // (SafeSslHandle : SafeDeleteSslContext). The captured buffer is owned by the
+            // SSL object and freed on SSL_free, so the span stays valid until this session
+            // (which roots the handle) is disposed.
+            if (_securityContext is not SafeSslHandle ssl || ssl.IsInvalid)
+            {
+                return;
+            }
+
+            unsafe
+            {
+                if (Interop.Ssl.SslGetClientHelloData(ssl, out byte* data, out int length) == 1
+                    && data != null && length > 0)
+                {
+                    result = new ReadOnlySpan<byte>(data, length);
+                }
+            }
+        }
+
         private static TlsOperationStatus MapSslError(Interop.Ssl.SslErrorCode error, string op)
         {
             return error switch
             {
                 Interop.Ssl.SslErrorCode.SSL_ERROR_WANT_READ => TlsOperationStatus.WantRead,
                 Interop.Ssl.SslErrorCode.SSL_ERROR_WANT_WRITE => TlsOperationStatus.WantWrite,
+                Interop.Ssl.SslErrorCode.SSL_ERROR_WANT_CLIENT_HELLO_CB => TlsOperationStatus.NeedsClientHello,
                 Interop.Ssl.SslErrorCode.SSL_ERROR_ZERO_RETURN => TlsOperationStatus.Closed,
                 _ => throw new AuthenticationException($"OpenSSL {op} failed: {error}"),
             };

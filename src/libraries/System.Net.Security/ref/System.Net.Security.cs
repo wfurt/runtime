@@ -696,11 +696,13 @@ namespace System.Net.Security
         WantCredentials = 4,
         NeedsCertificateValidation = 5,
         NeedsServerOptions = 6,
+        NeedsClientHello = 7,
     }
     public sealed partial class TlsContext : System.IDisposable
     {
         internal TlsContext() { }
         public bool IsServer { get { throw null; } }
+        public bool EnableClientHelloInspection { get { throw null; } set { } }
         public static System.Net.Security.TlsContext Create(System.Net.Security.SslServerAuthenticationOptions? options) { throw null; }
         public static System.Net.Security.TlsContext Create(System.Net.Security.SslClientAuthenticationOptions options) { throw null; }
         public void Dispose() { }
@@ -734,6 +736,7 @@ namespace System.Net.Security
         public void SetServerOptions(System.Net.Security.SslServerAuthenticationOptions options) { }
         public void SetClientCertificateContext(System.Net.Security.SslStreamCertificateContext context) { }
         public System.Collections.Generic.IReadOnlyList<string>? GetAcceptableIssuers() { throw null; }
+        public System.ReadOnlySpan<byte> GetClientHelloBytes() { throw null; }
         public System.Security.Cryptography.X509Certificates.X509Certificate2? LocalCertificate { get { throw null; } }
         public System.Security.Authentication.ExtendedProtection.ChannelBinding? GetChannelBinding(System.Security.Authentication.ExtendedProtection.ChannelBindingKind kind) { throw null; }
         public System.Net.Security.TlsOperationStatus RequestClientCertificate(System.Span<byte> ciphertext, out int bytesWritten) { throw null; }

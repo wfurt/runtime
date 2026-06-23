@@ -224,6 +224,7 @@ namespace System.Net.Security
                 AllowRsaPssPadding = AllowRsaPssPadding,
                 AllowRsaPkcs1Padding = AllowRsaPkcs1Padding,
                 ForceSyncPal = ForceSyncPal,
+                EnableClientHelloCallback = EnableClientHelloCallback,
             };
             return copy;
         }
@@ -256,6 +257,10 @@ namespace System.Net.Security
         // Set by callers (e.g. TlsSession) whose state machine is intrinsically synchronous
         // and cannot use the async Network Framework PAL path on macOS.
         internal bool ForceSyncPal { get; set; }
+
+        // Server-side only. When set, the OpenSSL handshake pauses once at ClientHello and
+        // the raw ClientHello bytes are captured for inspection by TlsSession callers.
+        internal bool EnableClientHelloCallback { get; set; }
 
 #if TARGET_ANDROID
         internal SslStream.JavaProxy? SslStreamProxy { get; set; }

@@ -701,11 +701,13 @@ extern bool g_libSslUses32BitTime;
     REQUIRED_FUNCTION(SSL_CTX_remove_session) \
     LIGHTUP_FUNCTION(SSL_CTX_set_alpn_protos) \
     LIGHTUP_FUNCTION(SSL_CTX_set_alpn_select_cb) \
+    LIGHTUP_FUNCTION(SSL_CTX_set_client_hello_cb) \
     REQUIRED_FUNCTION(SSL_CTX_set_cipher_list) \
     LIGHTUP_FUNCTION(SSL_CTX_set_ciphersuites) \
     REQUIRED_FUNCTION(SSL_CTX_set_client_cert_cb) \
     REQUIRED_FUNCTION(SSL_CTX_set_ex_data) \
     REQUIRED_FUNCTION(SSL_CTX_set_keylog_callback) \
+    REQUIRED_FUNCTION(SSL_CTX_set_msg_callback) \
     REQUIRED_FUNCTION(SSL_CTX_set_quiet_shutdown) \
     REQUIRED_FUNCTION(SSL_CTX_set_options) \
     REQUIRED_FUNCTION(SSL_CTX_set_security_level) \
@@ -1286,12 +1288,14 @@ extern TYPEOF(OPENSSL_gmtime)* OPENSSL_gmtime_ptr;
 #define SSL_CTX_remove_session SSL_CTX_remove_session_ptr
 #define SSL_CTX_set_alpn_protos SSL_CTX_set_alpn_protos_ptr
 #define SSL_CTX_set_alpn_select_cb SSL_CTX_set_alpn_select_cb_ptr
+#define SSL_CTX_set_client_hello_cb SSL_CTX_set_client_hello_cb_ptr
 #define SSL_CTX_set_cipher_list SSL_CTX_set_cipher_list_ptr
 #define SSL_CTX_set_ciphersuites SSL_CTX_set_ciphersuites_ptr
 #define SSL_CTX_set_client_cert_cb SSL_CTX_set_client_cert_cb_ptr
 #define SSL_CTX_set_ex_data SSL_CTX_set_ex_data_ptr
 #define SSL_CTX_set_options SSL_CTX_set_options_ptr
 #define SSL_CTX_set_keylog_callback SSL_CTX_set_keylog_callback_ptr
+#define SSL_CTX_set_msg_callback SSL_CTX_set_msg_callback_ptr
 #define SSL_CTX_set_quiet_shutdown SSL_CTX_set_quiet_shutdown_ptr
 #define SSL_CTX_set_security_level SSL_CTX_set_security_level_ptr
 #define SSL_CTX_set_session_id_context SSL_CTX_set_session_id_context_ptr

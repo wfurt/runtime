@@ -167,6 +167,27 @@ It will unset callback if set is zero.
 PALEXPORT void CryptoNative_SslSetClientCertCallback(SSL* ssl, int set);
 
 /*
+Enables raw ClientHello inspection on the given context when enable is non-zero.
+
+When enabled, the server-side handshake pauses once at ClientHello time
+(SSL_do_handshake reports SSL_ERROR_WANT_CLIENT_HELLO_CB) and the raw ClientHello
+handshake message is captured so it can be retrieved via
+CryptoNative_SslGetClientHelloData. The handshake resumes on the next
+SSL_do_handshake call. No-op on OpenSSL versions without the ClientHello callback.
+*/
+PALEXPORT void CryptoNative_SslCtxSetClientHelloCallback(SSL_CTX* ctx, int32_t enable);
+
+/*
+Returns the captured raw ClientHello handshake message for the given SSL.
+
+On success returns 1 and writes the captured buffer pointer and length to the
+data and length out-parameters (owned by the SSL object, valid until SSL_free).
+Returns 0 if nothing was captured. The bytes are the TLS handshake message
+(HandshakeType + length prefix + body), without the outer 5-byte TLS record header.
+*/
+PALEXPORT int32_t CryptoNative_SslGetClientHelloData(SSL* ssl, const uint8_t** data, int32_t* length);
+
+/*
 Requests that client sends Post-Handshake Authentication extension in ClientHello.
 */
 PALEXPORT void CryptoNative_SslSetPostHandshakeAuth(SSL* ssl, int32_t val);

@@ -292,6 +292,14 @@ internal static partial class Interop
                     Interop.Ssl.SslCtxSetAlpnSelectCb(sslCtx, &AlpnServerSelectCallback, IntPtr.Zero);
                 }
 
+                if (sslAuthenticationOptions.IsServer && sslAuthenticationOptions.EnableClientHelloCallback)
+                {
+                    // Pause the handshake at ClientHello and capture the raw bytes so
+                    // managed callers can inspect them (e.g. SNI/ALPN routing) before
+                    // any certificate or server-option decision is made.
+                    Interop.Ssl.SslCtxSetClientHelloCallback(sslCtx, 1);
+                }
+
                 if (sslAuthenticationOptions.CertificateContext != null && sslAuthenticationOptions.IsServer)
                 {
                     SetSslCertificate(sslCtx, sslAuthenticationOptions.CertificateContext.CertificateHandle, sslAuthenticationOptions.CertificateContext.KeyHandle);

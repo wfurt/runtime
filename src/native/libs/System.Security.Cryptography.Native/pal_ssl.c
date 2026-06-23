@@ -1106,6 +1106,177 @@ void CryptoNative_SslSetClientCertCallback(SSL* ssl, int set)
     SSL_set_cert_cb(ssl, set ? client_certificate_cb : NULL, NULL);
 }
 
+// ── Raw ClientHello inspection ───────────────────────────────────────────────
+//
+// Surfaces the raw ClientHello bytes OpenSSL received off the wire to managed
+// code, and pauses the handshake once at ClientHello time so managed code can
+// observe them (and resolve server options) before any certificate decision.
+//
+// Two native callbacks cooperate, both installed on the SSL_CTX:
+//   * msg_callback captures the inbound ClientHello handshake message as soon as
+//     it is read - this is the only hook that exposes the whole raw message
+//     (the SSL_client_hello_get0_* accessors only expose parsed fields).
+//   * client_hello_cb fires immediately after, and returns SSL_CLIENT_HELLO_RETRY
+//     exactly once to suspend the handshake (SSL_do_handshake then returns
+//     SSL_ERROR_WANT_CLIENT_HELLO_CB). On the resume call it returns SUCCESS.
+//
+// Per-SSL state is kept in ex_data so it is naturally freed on SSL_free and so
+// the captured bytes remain valid between suspend and resume (and until the
+// managed side has copied them).
+
+typedef struct ClientHelloCapture
+{
+    uint8_t* data;
+    int32_t length;
+    int32_t suspended; // 0 = not yet suspended, 1 = already retried once (resume)
+} ClientHelloCapture;
+
+static int g_clientHelloExIndex = -1;
+
+static void ClientHelloCapture_Free(void* parent, void* ptr, CRYPTO_EX_DATA* ad, int idx, long argl, void* argp)
+{
+    (void)parent; (void)ad; (void)idx; (void)argl; (void)argp;
+    ClientHelloCapture* cap = (ClientHelloCapture*)ptr;
+    if (cap != NULL)
+    {
+        if (cap->data != NULL)
+        {
+            OPENSSL_free(cap->data);
+        }
+        OPENSSL_free(cap);
+    }
+}
+
+static ClientHelloCapture* GetOrCreateClientHelloCapture(SSL* ssl)
+{
+    if (g_clientHelloExIndex < 0)
+    {
+        return NULL;
+    }
+
+    ClientHelloCapture* cap = (ClientHelloCapture*)SSL_get_ex_data(ssl, g_clientHelloExIndex);
+    if (cap == NULL)
+    {
+        cap = (ClientHelloCapture*)OPENSSL_malloc(sizeof(ClientHelloCapture));
+        if (cap == NULL)
+        {
+            return NULL;
+        }
+        memset(cap, 0, sizeof(ClientHelloCapture));
+        if (SSL_set_ex_data(ssl, g_clientHelloExIndex, cap) != 1)
+        {
+            OPENSSL_free(cap);
+            return NULL;
+        }
+    }
+    return cap;
+}
+
+static void ClientHelloMsgCallback(int write_p, int version, int content_type, const void* buf, size_t len, SSL* ssl, void* arg)
+{
+    (void)version; (void)arg;
+
+    // Only the inbound (write_p == 0) ClientHello handshake message. The first
+    // byte of a handshake message is its HandshakeType; ClientHello == 1.
+    if (write_p != 0 || content_type != SSL3_RT_HANDSHAKE || len < 1)
+    {
+        return;
+    }
+    if (((const uint8_t*)buf)[0] != SSL3_MT_CLIENT_HELLO)
+    {
+        return;
+    }
+
+    ClientHelloCapture* cap = GetOrCreateClientHelloCapture(ssl);
+    if (cap == NULL || cap->data != NULL)
+    {
+        // Already captured (e.g. HelloRetryRequest second ClientHello) - keep the first.
+        return;
+    }
+
+    cap->data = (uint8_t*)OPENSSL_malloc(len);
+    if (cap->data == NULL)
+    {
+        return;
+    }
+    memcpy(cap->data, buf, len);
+    cap->length = (int32_t)len;
+}
+
+static int ClientHelloCallback(SSL* ssl, int* al, void* arg)
+{
+    (void)al; (void)arg;
+
+    ClientHelloCapture* cap = GetOrCreateClientHelloCapture(ssl);
+    if (cap == NULL)
+    {
+        // Out of memory or no ex_data index - don't wedge the handshake.
+        return SSL_CLIENT_HELLO_SUCCESS;
+    }
+
+    if (cap->suspended == 0)
+    {
+        cap->suspended = 1;
+        // Suspend: SSL_do_handshake returns with SSL_ERROR_WANT_CLIENT_HELLO_CB.
+        return SSL_CLIENT_HELLO_RETRY;
+    }
+
+    return SSL_CLIENT_HELLO_SUCCESS;
+}
+
+void CryptoNative_SslCtxSetClientHelloCallback(SSL_CTX* ctx, int32_t enable)
+{
+    // void shim functions don't lead to exceptions, so skip the unconditional error clearing.
+
+    if (!enable)
+    {
+        return;
+    }
+
+    if (!API_EXISTS(SSL_CTX_set_client_hello_cb))
+    {
+        // OpenSSL < 1.1.1 - ClientHello callback unavailable.
+        return;
+    }
+
+    if (g_clientHelloExIndex < 0)
+    {
+        // CRYPTO_EX_INDEX_SSL == 0. The free function releases the per-SSL capture
+        // automatically on SSL_free.
+        int idx = CRYPTO_get_ex_new_index(0, 0, NULL, NULL, NULL, ClientHelloCapture_Free);
+        if (idx < 0)
+        {
+            return;
+        }
+        g_clientHelloExIndex = idx;
+    }
+
+    SSL_CTX_set_msg_callback(ctx, ClientHelloMsgCallback);
+    SSL_CTX_set_client_hello_cb(ctx, ClientHelloCallback, NULL);
+}
+
+int32_t CryptoNative_SslGetClientHelloData(SSL* ssl, const uint8_t** data, int32_t* length)
+{
+    // No error queue impact.
+    if (data != NULL) *data = NULL;
+    if (length != NULL) *length = 0;
+
+    if (g_clientHelloExIndex < 0 || ssl == NULL)
+    {
+        return 0;
+    }
+
+    ClientHelloCapture* cap = (ClientHelloCapture*)SSL_get_ex_data(ssl, g_clientHelloExIndex);
+    if (cap == NULL || cap->data == NULL)
+    {
+        return 0;
+    }
+
+    if (data != NULL) *data = cap->data;
+    if (length != NULL) *length = cap->length;
+    return 1;
+}
+
 void CryptoNative_SslCtxSetKeylogCallback(SSL_CTX* ctx, SslCtxSetKeylogCallback cb)
 {
     // void shim functions don't lead to exceptions, so skip the unconditional error clearing.

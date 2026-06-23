@@ -259,6 +259,12 @@ internal static partial class Interop
         [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_SslSetClientCertCallback")]
         internal static unsafe partial void SslSetClientCertCallback(SafeSslHandle ssl, int set);
 
+        [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_SslCtxSetClientHelloCallback")]
+        internal static partial void SslCtxSetClientHelloCallback(SafeSslContextHandle ctx, int enable);
+
+        [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_SslGetClientHelloData")]
+        internal static unsafe partial int SslGetClientHelloData(SafeSslHandle ssl, out byte* data, out int length);
+
         [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_SslSetPostHandshakeAuth")]
         internal static partial void SslSetPostHandshakeAuth(SafeSslHandle ssl, int value);
 
@@ -429,6 +435,7 @@ internal static partial class Interop
             SSL_ERROR_WANT_X509_LOOKUP = 4,
             SSL_ERROR_SYSCALL = 5,
             SSL_ERROR_ZERO_RETURN = 6,
+            SSL_ERROR_WANT_CLIENT_HELLO_CB = 11,
             SSL_ERROR_WANT_RETRY_VERIFY = 12,
 
             // NOTE: this SslErrorCode value doesn't exist in OpenSSL, but

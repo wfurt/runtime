@@ -57,5 +57,14 @@ namespace System.Net.Security
         /// <see cref="TlsSession.ProcessHandshake"/> again with the same input.
         /// </summary>
         NeedsServerOptions = 6,
+
+        /// <summary>
+        /// Server-side only. The handshake paused at ClientHello because raw ClientHello
+        /// inspection was enabled on the <see cref="TlsContext"/>. Retrieve the raw bytes
+        /// via <see cref="TlsSession.GetClientHelloBytes"/>, then call
+        /// <see cref="TlsSession.Handshake"/> (fd mode) or
+        /// <see cref="TlsSession.ProcessHandshake"/> again to resume the handshake.
+        /// </summary>
+        NeedsClientHello = 7,
     }
 }
