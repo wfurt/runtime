@@ -664,6 +664,20 @@ namespace System.Net.Security
                             // ServerCertificateSelectionCallback).
                             return TlsOperationStatus.WantRead;
                         }
+
+                        // Windows/SChannel only: surface the raw ClientHello before SChannel
+                        // processes it. The ClientHello bytes are the inbound record the caller
+                        // just fed, so capture the handshake message and suspend once. Input is
+                        // left unconsumed (bytesConsumed stays 0) so the caller re-feeds the same
+                        // bytes on resume, exactly like the NeedsServerOptions detour. This is a
+                        // no-op on OpenSSL, where the native client_hello_cb performs the capture
+                        // inside AcceptSecurityContext and surfaces NeedsClientHello via the token.
+                        TlsOperationStatus? clientHelloSuspend = null;
+                        TryCaptureClientHelloForInspection(input, ref clientHelloSuspend);
+                        if (clientHelloSuspend is TlsOperationStatus chStatus)
+                        {
+                            return chStatus;
+                        }
                     }
 
                     EnsureCredentialsAcquired();
@@ -1927,6 +1941,7 @@ namespace System.Net.Security
         partial void TryFastRead(Span<byte> buffer, ref int bytesRead, ref TlsOperationStatus? result);
         partial void TryFastWrite(ReadOnlySpan<byte> buffer, ref int bytesWritten, ref TlsOperationStatus? result);
         partial void TryGetClientHelloBytes(ref ReadOnlySpan<byte> result);
+        partial void TryCaptureClientHelloForInspection(ReadOnlySpan<byte> input, ref TlsOperationStatus? suspend);
 
         /// <summary>
         /// Returns the raw ClientHello handshake message captured by OpenSSL, or an
