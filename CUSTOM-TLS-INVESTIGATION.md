@@ -236,6 +236,60 @@ implementation *before* widening `private protected` → `protected`.
 
 (B) and (C) compose well: (C) is the extensibility point, (B) is how the HTTP layer consumes it.
 
+### Why the thing you cast to must be an *interface*
+
+A natural question is whether a custom type could derive from the new abstract `TlsSession` *and* also
+be a `Stream`, so `ConnectCallback` could return it. **It cannot**, for two independent reasons, both
+verified by compiling against `artifacts/bin/microsoft.netcore.app.ref/ref/net11.0`:
+
+```text
+error CS1721: class BothAtOnce cannot have multiple base classes: Stream and TlsSession
+error CS0122: 'TlsSession.TlsSession()' is inaccessible due to its protection level
+```
+
+`TlsSession` and `Stream` are both *classes*, and C#/the CLR are single-inheritance — `abstract` is not
+`interface` and grants no escape hatch. And today you cannot derive from `TlsSession` at all from
+outside System.Net.Security.
+
+By contrast, a `Stream` may implement any number of interfaces; this compiles clean:
+
+```csharp
+public class MyTlsStream : Stream, ITlsInfo { /* ... */ }
+```
+
+So the conclusion is structural rather than a matter of taste:
+
+| Cast target | Works with an arbitrary `Stream`? |
+|---|---|
+| Base class (`SslStream` or `TlsSession`) | **No** — forecloses the user's own base class, and can never coexist with `Stream` |
+| **Interface** | **Yes** — no inheritance tax |
+
+### What happens today without the cast
+
+Returning a plain `Stream` for an `https` origin does **not** merely lose the TLS metadata. The pool
+treats "not an `SslStream`" as "not yet secured" and wraps it in a real `SslStream`, performing a
+genuine handshake over it. Verified — the first bytes the handler wrote to a plain stream were:
+
+```text
+16-03-01-01-20-01-00-01-1C-03      <- TLS record 0x16 (Handshake), version 0x03xx: a real ClientHello
+```
+
+So a custom TLS stream that is not an `SslStream` gets **double-encrypted**, not ignored.
+
+### Corollary: option (C) needs no HTTP-layer change at all
+
+This is the practical advantage of `SslStream(TlsSession)` over the interface: the object returned from
+`ConnectCallback` is still a genuine `SslStream`, so **the existing cast succeeds unchanged** and
+`SslStream` simply forwards the property reads to the injected session.
+
+| | HTTP-layer change | Requires |
+|---|---|---|
+| (B) interface | Yes — pool consumes `ITls…` instead of `SslStream` | New interface in System.Net.Security |
+| (C) `SslStream(TlsSession)` | **None** | `TlsSession` becomes derivable (the CS0122 blocker) — free while `[Experimental]` |
+
+(C) is the smaller, lower-risk step and is on its own sufficient for the `HttpClient` scenario;
+(B) additionally frees callers from `SslStream` entirely.
+
 ### D. ✗ "Cast whatever `ConnectCallback` returns to `TlsSession`"
 
 **Cannot work as stated.** `ConnectCallback` returns `ValueTask<Stream>`; `TlsSession` is a class that
