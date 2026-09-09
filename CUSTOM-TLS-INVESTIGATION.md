@@ -290,6 +290,46 @@ This is the practical advantage of `SslStream(TlsSession)` over the interface: t
 (C) is the smaller, lower-risk step and is on its own sufficient for the `HttpClient` scenario;
 (B) additionally frees callers from `SslStream` entirely.
 
+### Why (C) contains the blast radius — and what must ride along with it
+
+The decisive practical argument for `SslStream(TlsSession)` is **containment**: every change lands
+inside System.Net.Security, on surface that carries no compatibility commitment yet.
+
+| | (C) `SslStream(TlsSession)` |
+|---|---|
+| System.Net.Http change | **None** — the returned object is still a real `SslStream`, so the existing cast succeeds |
+| New cross-assembly interface | None |
+| `virtual` on `SslStream` | None — the ✗ Disallowed rule is avoided entirely |
+| Compat commitment | None — all edits are on `[Experimental]` (SYSLIB5007) surface |
+
+**The plumbing largely exists already.** `SslStream.TlsSessionWedge.cs` declares
+`private TlsBufferSession? _tlsSession` and routes the handshake hot path through it. Its own comment
+says it is *"a wedge that proves TlsSession is expressive enough to host SslStream's TLS engine."*
+Accepting an externally supplied session is a much smaller step than building that path from scratch.
+
+Three caveats that must be handled, or the design repeats the problem it is fixing:
+
+1. **`TlsSession` has zero virtual members** — `grep -c "public virtual\|protected virtual"` returns
+   **0**. Widening the constructor from `private protected` to `protected` is therefore *not enough*: a
+   derived session would inherit non-virtual implementations of `NegotiatedApplicationProtocol`,
+   `IsHandshakeComplete`, `NegotiatedProtocol`, `GetChannelBinding`, `GetRemoteCertificate` … all
+   reading in-box private state (`_connectionInfo`, `_isHandshakeComplete`, `_context`). It could not
+   report its own values — **exactly the `SslStream` trap, one layer down.** The informational members
+   must become `virtual` in the same change. This is free while `[Experimental]`, and only until then.
+
+2. **`TlsSession` is a heavyweight implementation, not a contract** — 2386 lines owning
+   `ArrayBuffer`s, `SafeSocketHandle`/`Socket`, `SafeFreeCredentials`, `SslStreamCertificateContext`,
+   decrypt scratch buffers and PAL plumbing. Making it the third-party extension point hands a custom
+   engine a large amount of machinery it cannot use. The natural resolution is to split an abstract
+   contract out of it and leave `TlsSession` as the in-box implementation — which is worth doing
+   *before* the `[Experimental]` attribute comes off, since it cannot be done afterwards.
+
+3. **The wedge is not compiled everywhere.** Per the csproj conditions, `SslStream.TlsSessionWedge.cs`
+   is excluded when `UseAndroidCrypto` or `UseAppleCrypto` is set, with `SslStream.NoTlsSession.cs`
+   stubbed in instead. So on Android, iOS, tvOS and MacCatalyst `SslStream` has no `TlsSession` at all.
+   If `SslStream(TlsSession)` becomes the extensibility model, its availability on those platforms needs
+   an explicit decision rather than being discovered later.
+
 ### D. ✗ "Cast whatever `ConnectCallback` returns to `TlsSession`"
 
 **Cannot work as stated.** `ConnectCallback` returns `ValueTask<Stream>`; `TlsSession` is a class that
