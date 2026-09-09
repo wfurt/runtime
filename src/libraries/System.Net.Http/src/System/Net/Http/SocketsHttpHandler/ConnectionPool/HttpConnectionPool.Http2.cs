@@ -198,8 +198,25 @@ namespace System.Net.Http
                 if (IsSecure)
                 {
                     SslStream sslStream = (SslStream)stream;
+                    SslApplicationProtocol? negotiatedProtocol = ConnectHelper.TryGetNegotiatedApplicationProtocol(sslStream);
 
-                    if (sslStream.NegotiatedApplicationProtocol == SslApplicationProtocol.Http2)
+                    if (negotiatedProtocol is null)
+                    {
+                        // A custom SslStream implementation supplied by a ConnectCallback ran its own handshake,
+                        // so the built-in negotiation state is unavailable and cannot be reported. Rather than
+                        // failing the request, honor the version it explicitly demanded and otherwise fall back
+                        // to HTTP/1.1, matching what we do when a server does not select HTTP/2.
+                        if (queueItem.Request.Version.Major >= 2 && queueItem.Request.VersionPolicy == HttpVersionPolicy.RequestVersionExact)
+                        {
+                            connection = await ConstructHttp2ConnectionAsync(stream, queueItem.Request, activity, remoteEndPoint, connectionId, cts.Token).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await HandleHttp11Downgrade(queueItem.Request, stream, transportContext, activity, remoteEndPoint, connectionId, cts.Token).ConfigureAwait(false);
+                            return;
+                        }
+                    }
+                    else if (negotiatedProtocol.GetValueOrDefault() == SslApplicationProtocol.Http2)
                     {
                         // The server accepted our request for HTTP2.
 

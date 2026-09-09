@@ -212,15 +212,27 @@ namespace System.Net.Http
         {
             if (stream is SslStream sslStream)
             {
+                string details;
+                try
+                {
 #pragma warning disable SYSLIB0058 // Use NegotiatedCipherSuite.
-                Trace(
-                    $"{this}. Id:{Id}, " +
-                    $"SslProtocol:{sslStream.SslProtocol}, NegotiatedApplicationProtocol:{sslStream.NegotiatedApplicationProtocol}, " +
-                    $"NegotiatedCipherSuite:{sslStream.NegotiatedCipherSuite}, CipherAlgorithm:{sslStream.CipherAlgorithm}, CipherStrength:{sslStream.CipherStrength}, " +
-                    $"HashAlgorithm:{sslStream.HashAlgorithm}, HashStrength:{sslStream.HashStrength}, " +
-                    $"KeyExchangeAlgorithm:{sslStream.KeyExchangeAlgorithm}, KeyExchangeStrength:{sslStream.KeyExchangeStrength}, " +
-                    $"LocalCertificate:{sslStream.LocalCertificate}, RemoteCertificate:{sslStream.RemoteCertificate}");
+                    details =
+                        $"SslProtocol:{sslStream.SslProtocol}, NegotiatedApplicationProtocol:{ConnectHelper.TryGetNegotiatedApplicationProtocol(sslStream)}, " +
+                        $"NegotiatedCipherSuite:{sslStream.NegotiatedCipherSuite}, CipherAlgorithm:{sslStream.CipherAlgorithm}, CipherStrength:{sslStream.CipherStrength}, " +
+                        $"HashAlgorithm:{sslStream.HashAlgorithm}, HashStrength:{sslStream.HashStrength}, " +
+                        $"KeyExchangeAlgorithm:{sslStream.KeyExchangeAlgorithm}, KeyExchangeStrength:{sslStream.KeyExchangeStrength}, " +
+                        $"LocalCertificate:{sslStream.LocalCertificate}, RemoteCertificate:{sslStream.RemoteCertificate}";
 #pragma warning restore SYSLIB0058 // Use NegotiatedCipherSuite.
+                }
+                catch (InvalidOperationException)
+                {
+                    // A custom SslStream implementation supplied by a ConnectCallback performed its own
+                    // handshake, so the built-in properties have no state to report and throw. Tracing must
+                    // never change whether a request succeeds.
+                    details = "custom SslStream implementation";
+                }
+
+                Trace($"{this}. Id:{Id}, {details}");
             }
             else
             {

@@ -55,6 +55,27 @@ namespace System.Net.Http
             return sslOptions;
         }
 
+        /// <summary>
+        /// Gets the ALPN protocol negotiated on <paramref name="sslStream"/>, or <see langword="null"/> if it
+        /// cannot be determined.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="SslStream.NegotiatedApplicationProtocol"/> is not virtual and throws unless the built-in
+        /// handshake ran, so a custom <see cref="SslStream"/> returned from
+        /// <see cref="SocketsHttpHandler.ConnectCallback"/> is unable to report the protocol it negotiated.
+        /// </remarks>
+        public static SslApplicationProtocol? TryGetNegotiatedApplicationProtocol(SslStream sslStream)
+        {
+            try
+            {
+                return sslStream.NegotiatedApplicationProtocol;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
         public static async ValueTask<SslStream> EstablishSslConnectionAsync(SslClientAuthenticationOptions sslOptions, HttpRequestMessage request, bool async, Stream stream, CancellationToken cancellationToken)
         {
             sslOptions = SetUpRemoteCertificateValidationCallback(sslOptions, request);

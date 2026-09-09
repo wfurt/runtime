@@ -5025,6 +5025,226 @@ namespace System.Net.Http.Functional.Tests
         }
 
         [Fact]
+        public async Task ConnectCallback_CustomTlsImplementation_Success()
+        {
+            if (UseVersion != HttpVersion.Version11)
+            {
+                // Only HTTP/1.1 works with a custom SslStream implementation today. HTTP/2 requires
+                // SslStream.NegotiatedApplicationProtocol, which is not virtual and throws unless the
+                // built-in handshake ran. See https://github.com/dotnet/runtime/issues/132848.
+                return;
+            }
+
+            const string ResponseContent = "Hello from a custom TLS implementation!";
+
+            CustomTlsStream customStream = null;
+
+            HttpClientHandler handler = CreateHttpClientHandler();
+            var socketsHandler = (SocketsHttpHandler)GetUnderlyingSocketsHttpHandler(handler);
+            socketsHandler.ConnectCallback = (context, token) =>
+            {
+                customStream = new CustomTlsStream(
+                    $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {ResponseContent.Length}\r\n\r\n{ResponseContent}");
+                return ValueTask.FromResult<Stream>(customStream);
+            };
+
+            using (HttpClient client = CreateHttpClient(handler))
+            {
+                HttpRequestMessage request = CreateRequest(HttpMethod.Get, new Uri("https://doesnotexist.invalid/foo"), UseVersion, exactVersion: true);
+                using HttpResponseMessage response = await client.SendAsync(request);
+
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Equal(HttpVersion.Version11, response.Version);
+                Assert.Equal(ResponseContent, await response.Content.ReadAsStringAsync());
+            }
+
+            Assert.NotNull(customStream);
+
+            // The built-in TLS implementation was never engaged: no handshake ran on the base SslStream,
+            // and every byte the handler wrote was handled by the derived class.
+            Assert.False(customStream.IsAuthenticated);
+            Assert.StartsWith("GET /foo HTTP/1.1\r\n", customStream.WrittenRequest);
+            Assert.Contains("Host: doesnotexist.invalid\r\n", customStream.WrittenRequest);
+        }
+
+        /// <summary>
+        /// Stands in for a third-party TLS engine plugged into <see cref="SocketsHttpHandler.ConnectCallback"/>:
+        /// it derives from <see cref="SslStream"/> but never runs the built-in handshake or record layer.
+        /// Reads return a canned response and writes are captured.
+        /// </summary>
+        private sealed class CustomTlsStream : SslStream
+        {
+            private readonly MemoryStream _response;
+            private readonly MemoryStream _request = new MemoryStream();
+
+            public CustomTlsStream(string response)
+                : base(new UnusedInnerStream())
+            {
+                _response = new MemoryStream(Encoding.ASCII.GetBytes(response));
+            }
+
+            public string WrittenRequest => Encoding.ASCII.GetString(_request.ToArray());
+
+            public override bool CanRead => true;
+            public override bool CanWrite => true;
+            public override bool CanSeek => false;
+            public override bool CanTimeout => false;
+
+            // SslStream surfaces what its own handshake negotiated; a custom implementation supplies its own values.
+            public override SslProtocols SslProtocol => SslProtocols.Tls13;
+
+            public override int Read(Span<byte> buffer) => _response.Read(buffer);
+
+            public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+            public override int ReadByte()
+            {
+                byte b = 0;
+                return Read(new Span<byte>(ref b)) == 0 ? -1 : b;
+            }
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                ValueTask.FromResult(Read(buffer.Span));
+
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                Task.FromResult(Read(buffer.AsSpan(offset, count)));
+
+            public override void Write(ReadOnlySpan<byte> buffer) => _request.Write(buffer);
+
+            public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+            public override void WriteByte(byte value) => Write(new ReadOnlySpan<byte>(ref value));
+
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                Write(buffer.Span);
+                return ValueTask.CompletedTask;
+            }
+
+            public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            {
+                Write(buffer.AsSpan(offset, count));
+                return Task.CompletedTask;
+            }
+
+            public override void Flush() { }
+
+            public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+            /// <summary>
+            /// The <see cref="AuthenticatedStream"/> constructor requires a readable and writable inner stream,
+            /// but a custom implementation that overrides all I/O never touches it.
+            /// </summary>
+            private sealed class UnusedInnerStream : Stream
+            {
+                public override bool CanRead => true;
+                public override bool CanWrite => true;
+                public override bool CanSeek => false;
+                public override long Length => throw new NotSupportedException();
+                public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+                public override void Flush() { }
+                public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+                public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+                public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+                public override void SetLength(long value) => throw new NotSupportedException();
+            }
+        }
+
+        [Fact]
+        public async Task ConnectCallback_CustomTlsImplementation_Http2_Success()
+        {
+            if (UseVersion != HttpVersion.Version20)
+            {
+                return;
+            }
+
+            const string ResponseContent = "Hello over HTTP/2!";
+
+            // A plaintext HTTP/2 server. The handler is told the endpoint is https, so it takes the
+            // SslStream code path, but the custom implementation is what actually carries the bytes.
+            using Http2LoopbackServer server = Http2LoopbackServer.CreateServer(new Http2Options { UseSsl = false });
+
+            PassthroughTlsStream customStream = null;
+
+            HttpClientHandler handler = CreateHttpClientHandler();
+            var socketsHandler = (SocketsHttpHandler)GetUnderlyingSocketsHttpHandler(handler);
+            socketsHandler.ConnectCallback = async (context, token) =>
+            {
+                var tcpClient = new TcpClient();
+                await tcpClient.ConnectAsync(context.DnsEndPoint.Host, context.DnsEndPoint.Port, token);
+                customStream = new PassthroughTlsStream(tcpClient.GetStream());
+                return customStream;
+            };
+
+            Uri uri = new UriBuilder(server.Address) { Scheme = Uri.UriSchemeHttps }.Uri;
+
+            using HttpClient client = CreateHttpClient(handler);
+            Task<HttpResponseMessage> clientTask = client.SendAsync(CreateRequest(HttpMethod.Get, uri, UseVersion, exactVersion: true));
+
+            Task serverTask = Task.Run(async () =>
+            {
+                Http2LoopbackConnection connection = await server.EstablishConnectionAsync();
+                int streamId = await connection.ReadRequestHeaderAsync();
+                await connection.SendResponseHeadersAsync(streamId, endStream: false);
+                await connection.SendResponseBodyAsync(streamId, Encoding.ASCII.GetBytes(ResponseContent));
+            });
+
+            // Await both so that a client-side failure surfaces instead of deadlocking against the server.
+            await TestHelper.WhenAllCompletedOrAnyFailed(clientTask, serverTask);
+
+            using HttpResponseMessage response = await clientTask;
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(HttpVersion.Version20, response.Version);
+            Assert.Equal(ResponseContent, await response.Content.ReadAsStringAsync());
+
+            // The built-in TLS implementation was never engaged, yet a real HTTP/2 connection was established.
+            Assert.NotNull(customStream);
+            Assert.False(customStream.IsAuthenticated);
+        }
+
+        /// <summary>
+        /// A custom TLS implementation that happens to be a pass-through, standing in for a third-party
+        /// TLS engine plugged into <see cref="SocketsHttpHandler.ConnectCallback"/>. It deliberately
+        /// overrides nothing beyond the I/O members, to show that a derived class does not have to
+        /// reimplement the rest of <see cref="SslStream"/>'s surface.
+        /// </summary>
+        private sealed class PassthroughTlsStream : SslStream
+        {
+            private readonly Stream _inner;
+
+            public PassthroughTlsStream(Stream inner) : base(inner) => _inner = inner;
+
+            public override bool CanRead => true;
+            public override bool CanWrite => true;
+            public override bool CanSeek => false;
+
+            public override int Read(Span<byte> buffer) => _inner.Read(buffer);
+
+            public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                _inner.ReadAsync(buffer, cancellationToken);
+
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                _inner.ReadAsync(buffer, offset, count, cancellationToken);
+
+            public override void Write(ReadOnlySpan<byte> buffer) => _inner.Write(buffer);
+
+            public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+                _inner.WriteAsync(buffer, cancellationToken);
+
+            public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                _inner.WriteAsync(buffer, offset, count, cancellationToken);
+
+            public override void Flush() => _inner.Flush();
+
+            public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
+        }
+
+        [Fact]
         public async Task ConnectCallback_NoAlpn_OK()
         {
             // Create HTTP 1.1 loopback. Http2 should downgrade

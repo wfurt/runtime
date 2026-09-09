@@ -647,7 +647,7 @@ namespace System.Net.Http
                     {
                         if (NetEventSource.Log.IsEnabled())
                         {
-                            Trace($"Connected with custom SslStream: alpn='${sslStream.NegotiatedApplicationProtocol}'");
+                            Trace($"Connected with custom SslStream: alpn='{ConnectHelper.TryGetNegotiatedApplicationProtocol(sslStream)}'");
                         }
                     }
                     transportContext = sslStream.TransportContext;
