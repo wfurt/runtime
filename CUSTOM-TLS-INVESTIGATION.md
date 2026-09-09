@@ -504,3 +504,58 @@ Both tests pass (`Total: 1, Errors: 0, Failed: 0` each). Note that building only
 **not** pick up library source changes — `./build.sh libs.sfx` is required first.
 
 [issue]: https://github.com/dotnet/runtime/issues/132848
+
+---
+
+## 11. Status — picking this up again
+
+**Parked 2026-09-09.** Nothing here has been posted to the issue; the analysis lives only on this
+branch. `main` is clean (the two untracked `EnterpriseTests` directories predate this work).
+
+Branch `sslstream-custom-tls-evidence` on `wfurt/runtime`, on top of upstream `ea09718b076`:
+
+| Commit | Contents |
+|---|---|
+| `483e11bd317` | Tests + tactical product workarounds |
+| `092b95c47f7` | This document |
+| `b9e6ec6d828` | Why the cast target must be an interface, not a base class |
+| `fb8708b6e24` | Containment argument for `SslStream(TlsSession)` + prerequisites |
+| `170cf4fdf22` | What the wedge actually proves; surface split |
+| `cfc111f9978` | Optional members return `null`, not PNSE |
+
+### Settled
+
+* HTTP/1.1 with a fully custom `SslStream` subclass **works today** (passing test, no product change).
+* HTTP/2 is blocked by exactly one member, and by nothing else.
+* Adding `virtual` to `SslStream` members is ✗ Disallowed and the hazard is real.
+* `SslStream(TlsSession)` is the preferred direction: contained inside System.Net.Security, on
+  `[Experimental]` surface, and needs **no** System.Net.Http change.
+* The hard part is not weight but contract confusion, and wedge removal is the forcing function that
+  resolves it.
+
+### Open
+
+1. **Whether to post any of this to dotnet/runtime#132848.** The thread currently contains the claim
+   that making members virtual is "100% compatible", which is contradicted by
+   `breaking-change-rules.md:225`. Nothing has been posted.
+2. **Split HSM from alternative-TLS-stacks** (§8) before choosing a design — the motivating scenario may
+   not need a pluggable TLS engine at all.
+3. **Android / Apple platforms** have no `TlsSession` behind `SslStream` (the wedge is not compiled
+   there). Needs an explicit decision if `SslStream(TlsSession)` becomes the extensibility model.
+4. **Two bugs found in passing**, neither filed:
+   * Enabling `NetEventSource` turns a working HTTP/1.1 custom-stream request into a failed one (§9).
+   * For HTTP/2 the `InvalidOperationException` escapes `SendAsync` unwrapped, not as
+     `HttpRequestException` (§2).
+
+### Environment gotchas worth not rediscovering
+
+* **Building the test project does not rebuild library source.** `./build.sh libs.sfx` is required
+  first, or tests silently run against stale binaries — the failure looks like a hang, not a
+  compile error.
+* The live output is `artifacts/bin/System.Net.Http/Debug/net11.0-**unix**/`; the `net11.0` directory
+  next to it is stale and misleading when checking timestamps.
+* The installed SDK cannot target `net11.0`. To probe the new types, compile with `csc` against
+  `artifacts/bin/microsoft.netcore.app.ref/ref/net11.0/*.dll`, or use `./dotnet.sh`.
+* When writing loopback tests, await client and server together
+  (`TestHelper.WhenAllCompletedOrAnyFailed`). Awaiting the server first turns any client-side failure
+  into a deadlock rather than a readable error.
