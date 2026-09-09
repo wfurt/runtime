@@ -330,6 +330,66 @@ Three caveats that must be handled, or the design repeats the problem it is fixi
    If `SslStream(TlsSession)` becomes the extensibility model, its availability on those platforms needs
    an explicit decision rather than being discovered later.
 
+### Sizing caveat 2: what the wedge actually proves
+
+The wedge comment claims it *"proves TlsSession is expressive enough to host SslStream's TLS engine."*
+That is true of the code paths, but **not of the public contract**. The wedge touches only five members
+of `TlsSession`, and four of them are `internal`:
+
+| Member used by the wedge | Accessibility | Usable by a third-party engine? |
+|---|---|---|
+| `CredentialsHandle` (`SafeFreeCredentials?`) | `internal` | No |
+| `SecurityContext` (`TlsSecurityContext?`) | `internal` | No |
+| `HandshakeStepForSslStream(...)` | `internal` | No — bespoke, named for `SslStream` |
+| `SuppressInternalCertificateValidation` | `internal` | No |
+| `SetContext(TlsContext)` | **public** | **No** — `TlsContext` is `sealed` with an `internal` ctor |
+
+So **none** of `SslStream`'s coupling to `TlsSession` currently runs through surface a third party could
+provide. `SetContext(TlsContext)` is the sharpest case: it is public, it is on the abstract base, and a
+custom engine can never satisfy it, because the only ways to obtain a `TlsContext` are
+`CreateClient`/`CreateServer` from `Ssl*AuthenticationOptions` — always the in-box engine.
+
+That is the precise shape of caveat 2: **the contract is welded to the in-box engine at five points.**
+
+### Splitting the surface
+
+The public surface divides cleanly, which is the concrete input to a split:
+
+*A custom engine can implement these* — and they are almost exactly what `SslStream` and `HttpClient`
+need in order to report state:
+
+`IsHandshakeComplete`, `HasPendingOutput`, `TargetHostName`, `NegotiatedProtocol`,
+`NegotiatedCipherSuite`, `NegotiatedApplicationProtocol`, `GetRemoteCertificate()`,
+`GetRemoteCertificates()`, `GetAcceptableIssuers()`, `LocalCertificate`, `GetChannelBinding()`,
+`Dispose()`
+
+*In-box only* — meaningless or impossible for a custom engine, and therefore candidates to move off the
+shared contract:
+
+`SetContext(TlsContext)`, `SetClientCertificateContext(...)`, `AcceptWithDefaultValidation()`,
+`SetRemoteCertificateValidationResult(...)`, `ClientHelloInfo`, `GetClientHelloLength()`,
+`TryGetClientHelloBytes()`
+
+Note also that the *weight* objection is milder than it first appears: the inherited fields are mostly
+null references plus `ArrayBuffer`s constructed with `initialSize: 0`. The real cost of caveat 2 is
+**contract confusion**, not bytes — an implementer inherits seven members it cannot meaningfully
+provide.
+
+### Removing the wedge is the forcing function
+
+Since the goal is to remove the wedge and put `SslStream` genuinely on top of the primitives, that
+refactor is exactly the exercise that discovers the minimal contract: *whatever `SslStream` still needs
+from a session, once it can no longer reach internals, is the contract.* And it comes with a crisp
+acceptance criterion:
+
+> `SslStream` must be expressible against only **public, overridable** members of `TlsSession` — no
+> internal hooks, no `HandshakeStepForSslStream`, no `TlsContext`.
+
+When that holds, the same contract automatically serves a third-party engine, and caveat 2 is resolved
+as a by-product rather than as separate design work. If `SslStream` still needs an internal hook, the
+contract is not finished. This argues for letting the refactor drive the split rather than designing the
+split up front.
+
 ### D. ✗ "Cast whatever `ConnectCallback` returns to `TlsSession`"
 
 **Cannot work as stated.** `ConnectCallback` returns `ValueTask<Stream>`; `TlsSession` is a class that
