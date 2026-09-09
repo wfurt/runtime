@@ -390,6 +390,61 @@ as a by-product rather than as separate design work. If `SslStream` still needs 
 contract is not finished. This argues for letting the refactor drive the split rather than designing the
 split up front.
 
+### Optional members, and why `null` beats `PlatformNotSupportedException`
+
+Several contract members are genuinely optional for a custom engine — `GetChannelBinding` above all,
+since extended protection is rarely used. But **throwing is the wrong way to opt out**, for two reasons.
+
+`HttpClient` consumes channel binding in exactly one place,
+`AuthenticationHelper.NtAuth.cs:147`:
+
+```csharp
+Binding = connection.TransportContext?.GetChannelBinding(ChannelBindingKind.Endpoint),
+```
+
+The `?.` guards a null *`TransportContext`*, not a throwing `GetChannelBinding`. A
+`PlatformNotSupportedException` would therefore propagate and break Negotiate/NTLM on that connection,
+rather than degrading to "no channel binding."
+
+Meanwhile the in-box implementation already establishes the opposite convention — it returns `null`
+when the information is unavailable rather than throwing:
+
+```csharp
+internal ChannelBinding? GetChannelBinding(ChannelBindingKind kind)
+{
+    ChannelBinding? result = null;
+    if (_securityContext != null)
+    {
+        result = SslStreamPal.QueryContextChannelBinding(_securityContext, kind);
+    }
+    return result;
+}
+```
+
+So `null` is the established "not available" signal, the return type is already nullable, and the single
+consumer assigns it straight into a nullable field. **Optional members of the contract should return
+`null`/default rather than throw**, and that should be stated in the contract rather than left to each
+implementer.
+
+### Credentials and security handles belong below the contract line
+
+`CredentialsHandle` and `SecurityContext` are `internal` precisely because they are in-box PAL
+plumbing — a third-party engine holds its own safe handles for its own native objects and has nothing
+meaningful to put there. They should not appear on the shared contract at all.
+
+That is also the clearest statement of what wedge removal involves. The wedge exists to mirror those two
+handles back onto `SslStream`, and its own comment names the consumers:
+
+> *"SslStream's `_securityContext` / `_credentialsHandle` fields are mirrored from the TlsSession after
+> each step so that the rest of SslStream (cert validation, channel binding, ProcessHandshakeSuccess,
+> renegotiation, dispose) continues to work against the same SafeHandles."*
+
+So removing the wedge means moving those five paths — **cert validation, channel binding,
+`ProcessHandshakeSuccess`, renegotiation, and dispose** — off the mirrored handles and onto the session.
+Channel binding is a concrete instance: `SslStream.GetChannelBinding` reads `_securityContext` directly
+today, so it has to be re-pointed at the session before a custom engine could ever supply it. That is
+the real scope of the refactor, and it is the same work that produces the contract.
+
 ### D. ✗ "Cast whatever `ConnectCallback` returns to `TlsSession`"
 
 **Cannot work as stated.** `ConnectCallback` returns `ValueTask<Stream>`; `TlsSession` is a class that
